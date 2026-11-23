@@ -39,6 +39,8 @@ import {
   SyncLogEntry,
 } from './services/syncEngine';
 import { exportSelectedFilesToZip } from './services/zipExport';
+import { generateUserGuidePDF } from './services/pdfGenerator';
+import { ExecutionActivityModal } from './components/ExecutionActivityModal';
 
 import { Header } from './components/Header';
 import { FolderSelectorCard } from './components/FolderSelectorCard';
@@ -48,6 +50,7 @@ import { AutoSyncPanel } from './components/AutoSyncPanel';
 import { DriveExplorer } from './components/DriveExplorer';
 import { TransfersDrawer } from './components/TransfersDrawer';
 import { CenterProgressOverlay } from './components/CenterProgressOverlay';
+import { DownloadSuccessModal } from './components/DownloadSuccessModal';
 import {
   Zap,
   Cloud,
@@ -122,6 +125,16 @@ export default function App() {
     message: string;
   } | null>(null);
 
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState<boolean>(false);
+  const [isExecutionModalOpen, setIsExecutionModalOpen] = useState<boolean>(false);
+  const [downloadStartTime, setDownloadStartTime] = useState<number | null>(null);
+  const [downloadStats, setDownloadStats] = useState<{
+    count: number;
+    folderCount: number;
+    bytes: number;
+    elapsedSeconds: number;
+  }>({ count: 0, folderCount: 0, bytes: 0, elapsedSeconds: 0 });
+
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setFeedbackToast({ type, message });
     setTimeout(() => setFeedbackToast(null), 4000);
@@ -178,9 +191,30 @@ export default function App() {
     });
 
     // Subscribe to DownloadManager updates
+    let previousActiveCount = 0;
     const unsubscribeDownloads = downloadManager.subscribe((updatedTasks, updatedTelemetry) => {
       setTasks([...updatedTasks]);
       setTelemetry({ ...updatedTelemetry });
+
+      if (previousActiveCount > 0 && updatedTelemetry.activeCount === 0 && updatedTelemetry.completedCount > 0) {
+        const elapsed = downloadStartTime ? Math.floor((Date.now() - downloadStartTime) / 1000) : 0;
+        const uniqueFolders = new Set<string>();
+        updatedTasks.forEach((t) => {
+          if (t.pathSegments && t.pathSegments.length > 0) {
+            uniqueFolders.add(t.pathSegments.join('/'));
+          }
+        });
+
+        setDownloadStats({
+          count: updatedTelemetry.completedCount,
+          folderCount: Math.max(1, uniqueFolders.size),
+          bytes: updatedTelemetry.totalDownloadedBytes,
+          elapsedSeconds: elapsed,
+        });
+        setDownloadStartTime(null);
+        setIsSuccessModalOpen(true);
+      }
+      previousActiveCount = updatedTelemetry.activeCount;
     });
 
     // Subscribe to SyncEngine updates
@@ -375,6 +409,7 @@ export default function App() {
       }
 
       if (filesToEnqueue.length > 0) {
+        setDownloadStartTime(Date.now());
         downloadManager.enqueueFiles(filesToEnqueue);
         showToast(
           `Iniciando download de ${filesToEnqueue.length} arquivo(s) com criação das mesmas pastas!`,
@@ -419,16 +454,20 @@ export default function App() {
       }
     }
 
-    downloadManager.enqueueFiles(filesToEnqueue);
-    showToast(
-      `${filesToEnqueue.length} arquivo(s) enfileirados recriando a mesma estrutura de pastas!`,
-      'success'
-    );
+    if (filesToEnqueue.length > 0) {
+      setDownloadStartTime(Date.now());
+      downloadManager.enqueueFiles(filesToEnqueue);
+      showToast(
+        `${filesToEnqueue.length} arquivo(s) enfileirados recriando a mesma estrutura de pastas!`,
+        'success'
+      );
+    }
   };
 
   const handleDownloadSingle = async (file: DriveFile) => {
     if (!token) return;
     const currentFolderSegments = getCurrentFolderPath();
+    setDownloadStartTime(Date.now());
     if (file.isFolder) {
       showToast(`Mapeando pasta "${file.name}"...`, 'info');
       const recursiveFiles = await listAllFilesRecursively(token, file.id, [
@@ -521,6 +560,11 @@ export default function App() {
         peakSpeed={telemetry.peakSpeedBytes}
         concurrency={concurrency}
         isAutoSyncActive={syncState.isActive}
+        onDownloadPDF={() => {
+          generateUserGuidePDF();
+          showToast('Guia de Funcionalidades em PDF gerado com sucesso!', 'success');
+        }}
+        onOpenExecutionModal={() => setIsExecutionModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -735,6 +779,29 @@ export default function App() {
         tasks={tasks}
         telemetry={telemetry}
         onStopDownload={handleStopDownload}
+        localFolderName={localFolderName}
+        concurrency={concurrency}
+      />
+
+      {/* Download Success Confirmation Modal */}
+      <DownloadSuccessModal
+        isOpen={isSuccessModalOpen}
+        onClose={() => setIsSuccessModalOpen(false)}
+        completedCount={downloadStats.count}
+        folderCount={downloadStats.folderCount}
+        totalBytes={downloadStats.bytes}
+        elapsedSeconds={downloadStats.elapsedSeconds}
+        folderName={localFolderName}
+        onOpenFolderPicker={() => setIsFolderModalOpen(true)}
+      />
+
+      {/* Execution & Activity Information Modal */}
+      <ExecutionActivityModal
+        isOpen={isExecutionModalOpen}
+        onClose={() => setIsExecutionModalOpen(false)}
+        tasks={tasks}
+        telemetry={telemetry}
+        syncState={syncState}
         localFolderName={localFolderName}
         concurrency={concurrency}
       />

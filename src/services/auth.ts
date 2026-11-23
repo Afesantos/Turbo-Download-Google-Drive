@@ -2,6 +2,8 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   signOut,
@@ -37,19 +39,48 @@ export interface AuthState {
 }
 
 /**
- * Initialize auth state listener.
+ * Initialize auth state listener and handle redirect result if popup was blocked.
  */
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Check redirect result on load
+  getRedirectResult(auth)
+    .then((result) => {
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          cachedAccessToken = credential.accessToken;
+          if (onAuthSuccess) onAuthSuccess(result.user, cachedAccessToken);
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('Erro ao processar resultado do redirect:', err);
+    });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
+        // If user is logged in via redirect but credential isn't in memory yet, try getting OAuth credential
+        const credential = GoogleAuthProvider.credentialFromResult(await getRedirectResult(auth) as any);
+        if (credential?.accessToken) {
+          cachedAccessToken = credential.accessToken;
+          if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+        } else {
+          // If no OAuth token in memory, keep user authenticated if possible or prompt re-auth for Drive access
+          if (onAuthSuccess && cachedAccessToken) {
+            onAuthSuccess(user, cachedAccessToken);
+          } else {
+            // If we lack Drive scope token, we can still let user connect or use cached token if present
+            if (onAuthSuccess && auth.currentUser) {
+              // Try to pass dummy or proceed
+            }
+          }
+        }
       }
     } else {
       cachedAccessToken = null;
@@ -60,6 +91,7 @@ export const initAuth = (
 
 /**
  * Must be triggered by user interaction (button click).
+ * Falls back to signInWithRedirect if popup is blocked (common in iframes).
  */
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
@@ -73,7 +105,21 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.error('Erro na autenticação com Google:', error);
+    console.warn('Popup bloqueado ou falhou, tentando redirecionamento (redirect):', error);
+    if (
+      error?.code === 'auth/popup-blocked' ||
+      error?.code === 'auth/popup-closed-by-user' ||
+      error?.message?.includes('popup') ||
+      error?.message?.includes('cross-origin')
+    ) {
+      try {
+        await signInWithRedirect(auth, provider);
+        return null;
+      } catch (redirectErr) {
+        console.error('Erro no signInWithRedirect:', redirectErr);
+        throw redirectErr;
+      }
+    }
     throw error;
   } finally {
     isSigningIn = false;

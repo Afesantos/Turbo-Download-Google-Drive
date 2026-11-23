@@ -9,6 +9,7 @@ import {
   writeStreamToLocalFile,
   writeBufferToLocalFile,
   triggerBrowserDownload,
+  getOrCreateSubdirectory,
 } from './localFileSystem';
 
 export interface DownloadTask {
@@ -358,6 +359,15 @@ class DownloadManager {
       }
 
       if (canWriteDirectly && this.targetDirectoryHandle) {
+        // Ensure identical folder structure is created on disk immediately
+        if (task.pathSegments && task.pathSegments.length > 0) {
+          try {
+            await getOrCreateSubdirectory(this.targetDirectoryHandle, task.pathSegments);
+          } catch (err) {
+            console.warn('Erro ao criar subpasta local:', err);
+          }
+        }
+
         if (this.turboMultiChunk && isHugeFile && !task.file.exportFormat) {
           // Accelerated multi-range parallel chunk download
           const { blob, finalFileName } = await downloadLargeFileMultiChunk(

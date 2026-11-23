@@ -58,57 +58,64 @@ export const listDriveFiles = async (
   folderId: string = 'root',
   queryFilter: string = '',
   pageToken?: string,
-  pageSize: number = 100
+  pageSize: number = 200
 ): Promise<DriveListResponse> => {
-  let q = `'${folderId}' in parents and trashed = false`;
+  let allFiles: DriveFile[] = [];
+  let currentToken: string | undefined = pageToken;
 
-  if (queryFilter.trim()) {
-    q += ` and name contains '${queryFilter.replace(/'/g, "\\'")}'`;
-  }
+  do {
+    let q = `'${folderId}' in parents and trashed = false`;
+    if (queryFilter.trim()) {
+      q += ` and name contains '${queryFilter.replace(/'/g, "\\'")}'`;
+    }
 
-  const fields = 'nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum, iconLink, thumbnailLink, parents)';
-  const url = new URL('https://www.googleapis.com/drive/v3/files');
-  url.searchParams.set('q', q);
-  url.searchParams.set('pageSize', pageSize.toString());
-  url.searchParams.set('fields', fields);
-  url.searchParams.set('orderBy', 'folder,name');
-  if (pageToken) {
-    url.searchParams.set('pageToken', pageToken);
-  }
+    const fields = 'nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum, iconLink, thumbnailLink, parents)';
+    const url = new URL('https://www.googleapis.com/drive/v3/files');
+    url.searchParams.set('q', q);
+    url.searchParams.set('pageSize', pageSize.toString());
+    url.searchParams.set('fields', fields);
+    url.searchParams.set('orderBy', 'folder,name');
+    if (currentToken) {
+      url.searchParams.set('pageToken', currentToken);
+    }
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+    const response = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData?.error?.message || `Erro ao carregar arquivos do Drive (${response.status})`);
-  }
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData?.error?.message || `Erro ao carregar arquivos do Drive (${response.status})`);
+    }
 
-  const data = await response.json();
-  const files: DriveFile[] = (data.files || []).map((f: any) => {
-    const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
-    const exportConfig = GOOGLE_WORKSPACE_EXPORTS[f.mimeType];
-    return {
-      id: f.id,
-      name: f.name,
-      mimeType: f.mimeType,
-      size: f.size,
-      modifiedTime: f.modifiedTime,
-      md5Checksum: f.md5Checksum,
-      iconLink: f.iconLink,
-      thumbnailLink: f.thumbnailLink,
-      parents: f.parents,
-      isFolder,
-      exportFormat: exportConfig,
-    };
-  });
+    const data = await response.json();
+    const files: DriveFile[] = (data.files || []).map((f: any) => {
+      const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
+      const exportConfig = GOOGLE_WORKSPACE_EXPORTS[f.mimeType];
+      return {
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        size: f.size,
+        modifiedTime: f.modifiedTime,
+        md5Checksum: f.md5Checksum,
+        iconLink: f.iconLink,
+        thumbnailLink: f.thumbnailLink,
+        parents: f.parents,
+        isFolder,
+        exportFormat: exportConfig,
+      };
+    });
+
+    allFiles.push(...files);
+    currentToken = data.nextPageToken;
+  } while (currentToken);
 
   return {
-    files,
-    nextPageToken: data.nextPageToken,
+    files: allFiles,
+    nextPageToken: undefined,
   };
 };
 
@@ -163,28 +170,22 @@ export const listAllFilesRecursively = async (
   currentPath: string[] = []
 ): Promise<FileWithPath[]> => {
   const result: FileWithPath[] = [];
-  let pageToken: string | undefined = undefined;
-
-  do {
-    const resp = await listDriveFiles(accessToken, folderId, '', pageToken, 100);
-    for (const item of resp.files) {
-      if (item.isFolder) {
-        const subFiles = await listAllFilesRecursively(
-          accessToken,
-          item.id,
-          [...currentPath, item.name]
-        );
-        result.push(...subFiles);
-      } else {
-        result.push({
-          file: item,
-          pathSegments: currentPath,
-        });
-      }
+  const resp = await listDriveFiles(accessToken, folderId, '', undefined, 1000);
+  for (const item of resp.files) {
+    if (item.isFolder) {
+      const subFiles = await listAllFilesRecursively(
+        accessToken,
+        item.id,
+        [...currentPath, item.name]
+      );
+      result.push(...subFiles);
+    } else {
+      result.push({
+        file: item,
+        pathSegments: currentPath,
+      });
     }
-    pageToken = resp.nextPageToken;
-  } while (pageToken);
-
+  }
   return result;
 };
 

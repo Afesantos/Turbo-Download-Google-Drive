@@ -186,6 +186,30 @@ export const getOrCreateSubdirectory = async (
   return currentHandle;
 };
 
+// Helper to ensure duplicate filenames in the same directory get unique suffixes (e.g. file (1).pdf)
+const getUniqueFileHandle = async (
+  dirHandle: FileSystemDirectoryHandle,
+  originalName: string
+): Promise<FileSystemFileHandle> => {
+  let name = originalName;
+  const lastDotIndex = originalName.lastIndexOf('.');
+  const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
+  const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex) : '';
+
+  let counter = 1;
+  while (true) {
+    try {
+      await dirHandle.getFileHandle(name, { create: false });
+      name = `${baseName} (${counter})${ext}`;
+      counter++;
+    } catch {
+      break;
+    }
+  }
+
+  return await dirHandle.getFileHandle(name, { create: true });
+};
+
 // Stream write data directly to file on user disk with progress callbacks
 export const writeStreamToLocalFile = async (
   targetDirHandle: FileSystemDirectoryHandle,
@@ -196,7 +220,7 @@ export const writeStreamToLocalFile = async (
   onProgress?: (bytesWritten: number, total: number | undefined) => void
 ): Promise<void> => {
   const dir = await getOrCreateSubdirectory(targetDirHandle, pathSegments);
-  const fileHandle = await dir.getFileHandle(fileName, { create: true });
+  const fileHandle = await getUniqueFileHandle(dir, fileName);
   const writable = await fileHandle.createWritable({ keepExistingData: false });
 
   const reader = readableStream.getReader();
@@ -233,7 +257,7 @@ export const writeBufferToLocalFile = async (
   data: Uint8Array | ArrayBuffer | Blob
 ): Promise<void> => {
   const dir = await getOrCreateSubdirectory(targetDirHandle, pathSegments);
-  const fileHandle = await dir.getFileHandle(fileName, { create: true });
+  const fileHandle = await getUniqueFileHandle(dir, fileName);
   const writable = await fileHandle.createWritable({ keepExistingData: false });
   await (writable as any).write(data);
   await writable.close();

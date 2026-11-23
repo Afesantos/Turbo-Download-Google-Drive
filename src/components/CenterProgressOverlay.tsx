@@ -12,6 +12,7 @@ import {
   TrendingUp,
   X,
   Minimize2,
+  Cog,
 } from 'lucide-react';
 import { DownloadTask, SpeedTelemetry } from '../services/downloadManager';
 import { formatBytes, formatSpeed } from '../utils/formatters';
@@ -66,31 +67,38 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
   const currentFile = activeTasks[0]?.file;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300 pointer-events-auto">
-      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/40 rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/10">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-300 pointer-events-auto">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/50 rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/15">
         {/* Glow ambient background lights */}
-        <div className="absolute -top-24 -left-24 w-64 h-64 bg-orange-500/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -top-24 -left-24 w-64 h-64 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Top Header */}
+        {/* Top Header with Spinning Working Image/Icon */}
         <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center space-x-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-600 text-white flex items-center justify-center shadow-lg shadow-orange-500/25 animate-pulse">
-              <Flame className="w-6 h-6 fill-white" />
+          <div className="flex items-center space-x-3.5">
+            <div className="relative">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-600 text-white flex items-center justify-center shadow-xl shadow-orange-500/30">
+                <Flame className="w-7 h-7 fill-white" />
+              </div>
+              {/* Spinning working indicator badge */}
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-slate-900 border-2 border-orange-500 flex items-center justify-center">
+                <RefreshCw className="w-3.5 h-3.5 text-orange-400 animate-spin" />
+              </div>
             </div>
+
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
-                  Download em Andamento
+                  Aplicativo Trabalhando...
                 </h3>
-                <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded-full">
+                <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded-full">
                   {concurrency}x Turbo
                 </span>
               </div>
-              <p className="text-xs text-slate-400 flex items-center space-x-1.5 mt-0.5">
+              <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 font-medium">
                 <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="truncate max-w-[240px]">
-                  Salvando em: <strong className="text-slate-200">{localFolderName || 'Downloads'}</strong>
+                <span className="truncate max-w-[260px]">
+                  Gravando na pasta: <strong className="text-white font-mono">{localFolderName || 'Downloads'}</strong>
                 </span>
               </p>
             </div>
@@ -99,7 +107,7 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
           {/* Real-time speed badge */}
           <div className="text-right">
             <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-              Taxa Instantânea
+              Taxa de Rede
             </div>
             <div className="text-xl sm:text-2xl font-extrabold font-mono text-emerald-400 drop-shadow-sm">
               {formatSpeed(telemetry.currentSpeedBytes)}
@@ -110,7 +118,10 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
         {/* Big Central Progress Bar */}
         <div className="space-y-2 mb-6">
           <div className="flex items-center justify-between text-xs font-semibold">
-            <span className="text-slate-300">Progresso Geral</span>
+            <span className="text-slate-300 flex items-center space-x-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>Progresso de Sincronização & Download</span>
+            </span>
             <span className="text-2xl font-extrabold font-mono text-white">
               {overallPercent}%
             </span>
@@ -131,7 +142,7 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
               {formatBytes(totalBytesDownloaded)} de {formatBytes(totalBytesExpected)}
             </span>
             <span>
-              {completedTasks.length} de {relevantTasks.length} arquivo(s) salvos
+              {completedTasks.length} de {relevantTasks.length} arquivos processados
             </span>
           </div>
         </div>
