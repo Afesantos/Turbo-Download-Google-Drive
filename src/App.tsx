@@ -8,6 +8,8 @@ import { User } from 'firebase/auth';
 import {
   initAuth,
   googleSignIn,
+  refreshGoogleAccessToken,
+  isTokenLikelyExpired,
   logout,
   getAccessToken,
   setCachedAccessToken,
@@ -140,6 +142,8 @@ export default function App() {
   const [isDownloadAllModalOpen, setIsDownloadAllModalOpen] = useState<boolean>(false);
   const [isDownloadingAllZip, setIsDownloadingAllZip] = useState<boolean>(false);
   const [isCancellingDownloadAll, setIsCancellingDownloadAll] = useState<boolean>(false);
+  const [isDownloadAllAuthExpired, setIsDownloadAllAuthExpired] = useState<boolean>(false);
+  const [isRenewingDownloadAllAuth, setIsRenewingDownloadAllAuth] = useState<boolean>(false);
   const [savedZipCheckpoint, setSavedZipCheckpoint] = useState<ZipAllCheckpointSummary | null>(null);
   const [downloadAllProgress, setDownloadAllProgress] = useState<ZipAllProgress>({
     phase: 'scanning',
@@ -782,10 +786,47 @@ export default function App() {
     }
   };
 
+  const renewAccessTokenOnClick = async (): Promise<string | null> => {
+    try {
+      const res = await refreshGoogleAccessToken(user?.email);
+      if (!res?.accessToken) {
+        return null;
+      }
+      setUser(res.user);
+      setToken(res.accessToken);
+      setCachedAccessToken(res.accessToken);
+      downloadManager.setAccessToken(res.accessToken);
+      syncEngine.setAccessToken(res.accessToken);
+      setNeedsAuth(false);
+      return res.accessToken;
+    } catch (err: any) {
+      console.error('Erro ao renovar token Google:', err);
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+      if (err?.code === 'auth/popup-blocked') {
+        showToast('Popup bloqueado pelo navegador. Permita popups para renovar o acesso.', 'error');
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        showToast(
+          `Domínio "${currentHost}" não autorizado no Firebase Authentication.`,
+          'error'
+        );
+      } else {
+        showToast(err?.message || 'Não foi possível renovar a sessão do Google Drive.', 'error');
+      }
+      return null;
+    }
+  };
+
   const handleDownloadZip = async () => {
     if (!token) return;
     const selectedItems = files.filter((f) => selectedFileIds.has(f.id));
     if (selectedItems.length === 0) return;
+
+    let activeToken = token;
+    if (isTokenLikelyExpired()) {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      activeToken = refreshed;
+    }
 
     const controller = new AbortController();
     zipAbortRef.current = controller;
@@ -806,7 +847,7 @@ export default function App() {
     const startTime = Date.now();
     try {
       const zipStats = await exportSelectedFilesToZip(
-        token,
+        activeToken,
         selectedItems,
         localDirHandle,
         (progress) => setZipProgress(progress),
@@ -833,6 +874,12 @@ export default function App() {
       setIsZipModalOpen(false);
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         showToast('Compactação ZIP cancelada pelo usuário.', 'info');
+      } else if (err?.status === 401) {
+        showToast(
+          'Sua sessão do Google Drive expirou (limite de 1 hora). Clique novamente em "Baixar ZIP" ou reconecte sua conta para renovar.',
+          'error'
+        );
+        setCachedAccessToken(null);
       } else {
         console.error('Erro ao gerar ZIP:', err);
         showToast(err?.message || 'Falha na criação do ZIP.', 'error');
@@ -858,6 +905,8 @@ export default function App() {
       return;
     }
     setIsCancellingDownloadAll(false);
+    setIsDownloadAllAuthExpired(false);
+    setIsRenewingDownloadAllAuth(false);
     setDownloadAllProgress({
       phase: 'scanning',
       percent: 0,
@@ -873,18 +922,20 @@ export default function App() {
     setIsDownloadAllModalOpen(true);
   };
 
-  const runDownloadAllZip = async (resumeFromCheckpoint: boolean) => {
-    if (!token) return;
+  const runDownloadAllZip = async (resumeFromCheckpoint: boolean, overrideToken?: string) => {
+    const activeToken = overrideToken || token;
+    if (!activeToken) return;
     const controller = new AbortController();
     downloadAllAbortRef.current = controller;
     setIsCancellingDownloadAll(false);
+    setIsDownloadAllAuthExpired(false);
     setSavedZipCheckpoint(null);
     setIsDownloadingAllZip(true);
     const startTime = Date.now();
 
     try {
       const zipStats = await exportAllDriveToZip(
-        token,
+        activeToken,
         localDirHandle,
         (progress) => setDownloadAllProgress(progress),
         controller.signal,
@@ -916,11 +967,22 @@ export default function App() {
             : 'Operação "Baixar Tudo" cancelada.',
           'info'
         );
+        setIsDownloadAllModalOpen(false);
+      } else if (err?.status === 401) {
+        const checkpoint = await getZipAllCheckpointSummary();
+        setSavedZipCheckpoint(checkpoint);
+        setCachedAccessToken(null);
+        setIsDownloadAllAuthExpired(true);
+        setIsDownloadAllModalOpen(true);
+        showToast(
+          'Token do Google expirado. Clique em "Renovar Acesso e Continuar" para prosseguir sem perder o progresso.',
+          'error'
+        );
       } else {
         console.error('Erro ao baixar todo o Drive em ZIP:', err);
         showToast(err?.message || 'Falha ao gerar o ZIP completo do Drive.', 'error');
+        setIsDownloadAllModalOpen(false);
       }
-      setIsDownloadAllModalOpen(false);
     } finally {
       setIsDownloadingAllZip(false);
       setIsCancellingDownloadAll(false);
@@ -928,18 +990,49 @@ export default function App() {
     }
   };
 
-  const handleConfirmFreshDownloadAllZip = () => {
-    void runDownloadAllZip(false);
+  const handleConfirmFreshDownloadAllZip = async () => {
+    let activeToken = token;
+    if (isTokenLikelyExpired()) {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      activeToken = refreshed;
+    }
+    void runDownloadAllZip(false, activeToken || undefined);
   };
 
-  const handleResumeDownloadAllZip = () => {
-    void runDownloadAllZip(true);
+  const handleResumeDownloadAllZip = async () => {
+    let activeToken = token;
+    if (isTokenLikelyExpired()) {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      activeToken = refreshed;
+    }
+    void runDownloadAllZip(true, activeToken || undefined);
   };
 
   const handleDenyResumeAndStartFresh = async () => {
+    let activeToken = token;
+    if (isTokenLikelyExpired()) {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      activeToken = refreshed;
+    }
     await clearZipAllCheckpoint();
     setSavedZipCheckpoint(null);
-    void runDownloadAllZip(false);
+    void runDownloadAllZip(false, activeToken || undefined);
+  };
+
+  const handleRenewDownloadAllAuth = async () => {
+    setIsRenewingDownloadAllAuth(true);
+    try {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      const checkpoint = await getZipAllCheckpointSummary();
+      setIsDownloadAllAuthExpired(false);
+      void runDownloadAllZip(checkpoint !== null, refreshed);
+    } finally {
+      setIsRenewingDownloadAllAuth(false);
+    }
   };
 
   const handleCancelDownloadAllZip = () => {
@@ -947,6 +1040,7 @@ export default function App() {
       setIsCancellingDownloadAll(true);
       downloadAllAbortRef.current.abort();
     } else {
+      setIsDownloadAllAuthExpired(false);
       setIsDownloadAllModalOpen(false);
     }
   };
@@ -1241,12 +1335,15 @@ export default function App() {
         isOpen={isDownloadAllModalOpen}
         isProcessing={isDownloadingAllZip}
         isCancelling={isCancellingDownloadAll}
+        isAuthExpired={isDownloadAllAuthExpired}
+        isRenewingAuth={isRenewingDownloadAllAuth}
         progress={downloadAllProgress}
         savedCheckpoint={savedZipCheckpoint}
         localFolderName={localFolderName}
         onConfirmFresh={handleConfirmFreshDownloadAllZip}
         onResumeCheckpoint={handleResumeDownloadAllZip}
         onDenyResumeAndStartFresh={handleDenyResumeAndStartFresh}
+        onRenewAuthAndResume={handleRenewDownloadAllAuth}
         onCancel={handleCancelDownloadAllZip}
       />
       {/* Selected Items ZIP Progress Tracking Modal */}

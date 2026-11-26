@@ -258,7 +258,7 @@ export const exportSelectedFilesToZip = async (
       committedBytes += blob.size;
       downloadedCount++;
     } catch (err: any) {
-      if (err?.name === 'AbortError' || signal?.aborted) {
+      if (err?.name === 'AbortError' || signal?.aborted || err?.status === 401) {
         throw err;
       }
       console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
@@ -594,7 +594,7 @@ export const exportAllDriveToZip = async (
 
       await saveZipAllCheckpointFile(zipPath, blob, checkpointMeta);
     } catch (err: any) {
-      if (err?.name === 'AbortError' || signal?.aborted) {
+      if (err?.name === 'AbortError' || signal?.aborted || err?.status === 401) {
         throw err;
       }
       console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);

@@ -64,6 +64,27 @@ export const isGoogleWorkspaceDoc = (mimeType: string): boolean => {
   return mimeType.startsWith('application/vnd.google-apps.') && mimeType !== 'application/vnd.google-apps.folder';
 };
 
+const createDriveApiError = async (
+  response: Response,
+  fallbackMessage: string
+): Promise<Error & { status?: number }> => {
+  const errorData = await response.json().catch(() => ({}));
+  const rawMessage: string = errorData?.error?.message || '';
+
+  if (response.status === 401 || rawMessage.toLowerCase().includes('invalid authentication credentials')) {
+    const err: any = new Error(
+      'Sessão ou token do Google Drive expirado (limite de 1 hora). Clique para renovar o acesso e continuar de onde parou.'
+    );
+    err.status = 401;
+    err.rawMessage = rawMessage;
+    return err;
+  }
+
+  const err: any = new Error(rawMessage || `${fallbackMessage} (${response.status})`);
+  err.status = response.status;
+  return err;
+};
+
 /**
  * List files and folders in a specific parent folder or root
  */
@@ -108,10 +129,7 @@ export const listDriveFiles = async (
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const err: any = new Error(errorData?.error?.message || `Erro ao carregar arquivos do Drive (${response.status})`);
-      err.status = response.status;
-      throw err;
+      throw await createDriveApiError(response, 'Erro ao carregar arquivos do Drive');
     }
 
     const data = await response.json();
@@ -160,9 +178,7 @@ export const getDriveFileMeta = async (
   });
 
   if (!response.ok) {
-    const err: any = new Error(`Erro ao obter metadados do arquivo (${response.status})`);
-    err.status = response.status;
-    throw err;
+    throw await createDriveApiError(response, 'Erro ao obter metadados do arquivo');
   }
 
   const f = await response.json();
@@ -275,9 +291,7 @@ export const downloadFileStream = async (
   });
 
   if (!response.ok) {
-    const err: any = new Error(`Falha no download (${response.status}: ${response.statusText})`);
-    err.status = response.status;
-    throw err;
+    throw await createDriveApiError(response, `Falha no download (${response.statusText})`);
   }
 
   if (!response.body) {
@@ -376,6 +390,10 @@ export const downloadLargeFileMultiChunk = async (
       },
       signal,
     });
+
+    if (res.status === 401) {
+      throw await createDriveApiError(res, 'Sessão expirada durante download em partes');
+    }
 
     if (res.status !== 206) {
       throw new Error(`RANGE_NOT_SUPPORTED:${res.status}`);

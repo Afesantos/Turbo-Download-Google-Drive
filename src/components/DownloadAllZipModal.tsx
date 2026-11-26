@@ -21,12 +21,15 @@ interface DownloadAllZipModalProps {
   isOpen: boolean;
   isProcessing: boolean;
   isCancelling: boolean;
+  isAuthExpired?: boolean;
+  isRenewingAuth?: boolean;
   progress: ZipAllProgress;
   savedCheckpoint: ZipAllCheckpointSummary | null;
   localFolderName: string | null;
   onConfirmFresh: () => void;
   onResumeCheckpoint: () => void;
   onDenyResumeAndStartFresh: () => void;
+  onRenewAuthAndResume?: () => void;
   onCancel: () => void;
 }
 
@@ -47,12 +50,15 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   isOpen,
   isProcessing,
   isCancelling,
+  isAuthExpired = false,
+  isRenewingAuth = false,
   progress,
   savedCheckpoint,
   localFolderName,
   onConfirmFresh,
   onResumeCheckpoint,
   onDenyResumeAndStartFresh,
+  onRenewAuthAndResume,
   onCancel,
 }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -73,7 +79,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isResumePrompt = !isProcessing && savedCheckpoint !== null;
+  const isResumePrompt = !isProcessing && !isAuthExpired && savedCheckpoint !== null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
@@ -81,6 +87,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
         className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 transition-all my-auto ${
           isProcessing
             ? 'max-w-xl border-emerald-500/45 ring-4 ring-emerald-500/15'
+            : isAuthExpired
+            ? 'max-w-lg border-rose-500/45 ring-4 ring-rose-500/15'
             : isResumePrompt
             ? 'max-w-lg border-blue-500/45 ring-4 ring-blue-500/15'
             : 'max-w-md border-amber-500/40 ring-4 ring-amber-500/10'
@@ -90,6 +98,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
           className={`absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none ${
             isProcessing
               ? 'bg-emerald-500/15'
+              : isAuthExpired
+              ? 'bg-rose-500/15'
               : isResumePrompt
               ? 'bg-blue-500/15'
               : 'bg-amber-500/15'
@@ -263,6 +273,79 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 <Square className="w-3.5 h-3.5 fill-current" />
                 <span>{isCancelling ? 'Cancelando...' : 'Cancelar'}</span>
               </button>
+            </div>
+          </div>
+        ) : isAuthExpired ? (
+          /* Step 1C: OAuth2 Access Token Expired Mid-Operation — 1-Click Renewal */
+          <div className="relative z-10">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shadow-lg shadow-rose-500/20 mb-4">
+                <ShieldAlert className="w-7 h-7" />
+              </div>
+
+              <h3 className="font-extrabold text-lg text-white tracking-tight">
+                Sessão do Google Expirada (Limite de 1 hora)
+              </h3>
+
+              <div className="mt-3 space-y-3 text-left w-full">
+                <div className="bg-rose-950/40 border border-rose-800/70 rounded-2xl p-3.5 text-xs text-rose-100 flex items-start space-x-2.5">
+                  <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    O token de segurança OAuth 2 do Google Drive expira automaticamente após cerca
+                    de <strong>1 hora</strong> de uso. Renove o acesso com 1 clique para continuar
+                    exatamente de onde parou sem perder arquivos já baixados.
+                  </p>
+                </div>
+
+                {savedCheckpoint && (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        Progresso Preservado
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-white mt-0.5 block">
+                        {savedCheckpoint.completedFiles} / {savedCheckpoint.totalFiles} arquivos
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        Volume em Memória
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-emerald-400 mt-0.5 block">
+                        {formatBytes(savedCheckpoint.downloadedBytes)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                onClick={onCancel}
+                disabled={isRenewingAuth}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all disabled:opacity-50"
+              >
+                Fechar
+              </button>
+
+              {onRenewAuthAndResume && (
+                <button
+                  onClick={onRenewAuthAndResume}
+                  disabled={isRenewingAuth}
+                  className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRenewingAuth ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isRenewingAuth
+                      ? 'Renovando Acesso...'
+                      : savedCheckpoint
+                      ? 'Renovar Acesso e Continuar'
+                      : 'Renovar Acesso e Iniciar'}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         ) : isResumePrompt && savedCheckpoint ? (
