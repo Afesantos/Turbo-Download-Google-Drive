@@ -55,11 +55,10 @@ class DownloadManager {
   // Speed telemetry metrics
   private peakSpeed: number = 0;
   private speedSamples: { timestamp: number; bytes: number }[] = [];
-  private speedTicker: any = null;
-
-  constructor() {
-    this.startSpeedTicker();
-  }
+  private speedTicker: ReturnType<typeof setInterval> | null = null;
+  private archivedCompletedCount: number = 0;
+  private archivedErrorCount: number = 0;
+  private archivedDownloadedBytes: number = 0;
 
   public setAccessToken(token: string | null) {
     this.accessToken = token;
@@ -104,19 +103,27 @@ class DownloadManager {
     const allTasks = [
       ...Array.from(this.activeTasks.values()),
       ...this.queue,
-      ...this.completedTasks.slice(0, 30), // keep latest 30 for history
+      ...this.completedTasks.slice(0, 30), // keep latest 30 for drawer UI
     ];
 
-    const currentSpeed = this.isPaused ? 0 : this.calculateCurrentSpeed();
+    const currentSpeed = this.isPaused || this.activeTasks.size === 0 ? 0 : this.calculateCurrentSpeed();
     if (currentSpeed > this.peakSpeed) {
       this.peakSpeed = currentSpeed;
     }
 
     const totalDownloaded =
+      this.archivedDownloadedBytes +
       this.completedTasks.reduce((acc, t) => acc + (t.downloadedBytes || 0), 0) +
       Array.from(this.activeTasks.values()).reduce((acc, t) => acc + (t.downloadedBytes || 0), 0);
 
     const hasActiveDownloads = this.activeTasks.size > 0 || (this.queue.length > 0 && !this.isPaused);
+
+    const completedCount =
+      this.archivedCompletedCount +
+      this.completedTasks.filter((t) => t.status === 'completed').length;
+    const errorCount =
+      this.archivedErrorCount +
+      this.completedTasks.filter((t) => t.status === 'error').length;
 
     const telemetry: SpeedTelemetry = {
       currentSpeedBytes: currentSpeed,
@@ -124,8 +131,8 @@ class DownloadManager {
       totalDownloadedBytes: totalDownloaded,
       activeCount: this.activeTasks.size,
       queuedCount: this.queue.length,
-      completedCount: this.completedTasks.filter((t) => t.status === 'completed').length,
-      errorCount: this.completedTasks.filter((t) => t.status === 'error').length,
+      completedCount,
+      errorCount,
       isPaused: this.isPaused,
       hasActiveDownloads,
     };
@@ -136,10 +143,38 @@ class DownloadManager {
   private startSpeedTicker() {
     if (this.speedTicker) return;
     this.speedTicker = setInterval(() => {
+      if (this.activeTasks.size === 0 || this.isPaused) {
+        this.stopSpeedTicker();
+        this.speedSamples = [];
+        this.notify();
+        return;
+      }
       const now = Date.now();
       this.speedSamples = this.speedSamples.filter((s) => now - s.timestamp < 2000);
       this.notify();
     }, 400);
+  }
+
+  private stopSpeedTicker() {
+    if (this.speedTicker) {
+      clearInterval(this.speedTicker);
+      this.speedTicker = null;
+    }
+  }
+
+  private pushCompletedTask(task: DownloadTask) {
+    this.completedTasks.unshift(task);
+    if (this.completedTasks.length > 200) {
+      const evicted = this.completedTasks.pop();
+      if (evicted) {
+        this.archivedDownloadedBytes += evicted.downloadedBytes || 0;
+        if (evicted.status === 'completed') {
+          this.archivedCompletedCount++;
+        } else if (evicted.status === 'error') {
+          this.archivedErrorCount++;
+        }
+      }
+    }
   }
 
   private recordBytes(bytes: number) {
@@ -222,6 +257,7 @@ class DownloadManager {
   public pause(): void {
     this.isPaused = true;
     this.speedSamples = [];
+    this.stopSpeedTicker();
 
     // Abort all in-flight fetch streams
     this.activeControllers.forEach((controller) => {
@@ -262,6 +298,9 @@ class DownloadManager {
 
   public clearCompleted() {
     this.completedTasks = [];
+    this.archivedCompletedCount = 0;
+    this.archivedErrorCount = 0;
+    this.archivedDownloadedBytes = 0;
     this.notify();
   }
 
@@ -280,11 +319,16 @@ class DownloadManager {
 
       const controller = new AbortController();
       this.activeControllers.set(task.id, controller);
+      this.startSpeedTicker();
 
       this.notify();
 
       // Launch worker without blocking the loop
       this.executeDownload(task, controller.signal).finally(() => {
+        // Guard against stale worker cleanup if task was paused and immediately resumed
+        if (this.activeControllers.get(task.id) !== controller) {
+          return;
+        }
         this.activeControllers.delete(task.id);
         this.activeTasks.delete(task.id);
 
@@ -292,9 +336,13 @@ class DownloadManager {
           task.status = 'completed';
           task.progressPercent = 100;
           task.completedAt = Date.now();
-          this.completedTasks.unshift(task);
+          this.pushCompletedTask(task);
         } else if (task.status === 'error') {
-          this.completedTasks.unshift(task);
+          this.pushCompletedTask(task);
+        }
+
+        if (this.activeTasks.size === 0) {
+          this.stopSpeedTicker();
         }
 
         this.notify();

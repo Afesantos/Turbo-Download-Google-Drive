@@ -8,6 +8,7 @@ import {
   Clock,
   Square,
   Timer,
+  Calendar,
 } from 'lucide-react';
 import { ZipAllProgress } from '../services/zipExport';
 import { formatBytes } from '../utils/formatters';
@@ -191,22 +192,40 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
             </div>
           </div>
 
-          {/* Timing & ETA Grid */}
+          {/* Timing, Dates & ETA Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
-            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400 flex items-center space-x-1.5">
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span>Data inicial:</span>
+              </span>
+              <span className="font-mono font-bold text-slate-100 truncate">{timing.startDateTime}</span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Data final (prev.):</span>
+              </span>
+              <span className="font-mono font-bold text-amber-300 truncate">
+                {timing.predictedEndDateTime}
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
                 <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <span>Info das pastas:</span>
               </span>
-              <span className="font-mono font-bold text-slate-200">{timing.scanEstimateLabel}</span>
+              <span className="font-mono font-bold text-slate-200 truncate">{timing.scanEstimateLabel}</span>
             </div>
 
-            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400 flex items-center space-x-1.5">
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
                 <Timer className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>Término previsto:</span>
               </span>
-              <span className="font-mono font-bold text-amber-300">{timing.finishEstimateLabel}</span>
+              <span className="font-mono font-bold text-amber-300 truncate">{timing.finishEstimateLabel}</span>
             </div>
           </div>
 

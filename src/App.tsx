@@ -11,7 +11,6 @@ import {
   refreshGoogleAccessToken,
   isTokenLikelyExpired,
   logout,
-  getAccessToken,
   setCachedAccessToken,
 } from './services/auth';
 import {
@@ -40,9 +39,7 @@ import {
 } from './services/downloadManager';
 import {
   syncEngine,
-  WatchedItem,
   SyncEngineState,
-  SyncLogEntry,
 } from './services/syncEngine';
 import { exportSelectedFilesToZip, exportAllDriveToZip, ZipAllProgress } from './services/zipExport';
 import {
@@ -68,9 +65,7 @@ import { CenterProgressOverlay } from './components/CenterProgressOverlay';
 import { DownloadSuccessModal } from './components/DownloadSuccessModal';
 import {
   Zap,
-  Cloud,
   FolderOpen,
-  ArrowRight,
   ShieldCheck,
   Flame,
   CheckCircle,
@@ -88,7 +83,6 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
-  const [needsAuth, setNeedsAuth] = useState<boolean>(false);
 
   // Local folder state
   const [localDirHandle, setLocalDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -238,7 +232,6 @@ export default function App() {
         setCachedAccessToken(accessToken);
         downloadManager.setAccessToken(accessToken);
         syncEngine.setAccessToken(accessToken);
-        setNeedsAuth(false);
       },
       () => {
         setUser(null);
@@ -246,7 +239,6 @@ export default function App() {
         setCachedAccessToken(null);
         downloadManager.setAccessToken(null);
         syncEngine.setAccessToken(null);
-        setNeedsAuth(true);
       }
     );
 
@@ -370,15 +362,23 @@ export default function App() {
       setSyncState({ ...updatedSyncState });
     });
 
+    syncEngine.setOnAuthExpired(() => {
+      setToken(null);
+      setCachedAccessToken(null);
+      downloadManager.setAccessToken(null);
+      showToast('Sessão do Google Drive expirada. Conecte novamente para retomar o Auto-Sync.', 'error');
+    });
+
     return () => {
       unsubscribeAuth();
       unsubscribeDownloads();
       unsubscribeSync();
+      syncEngine.setOnAuthExpired(null);
       if (toastTimerRef.current) {
         clearTimeout(toastTimerRef.current);
       }
     };
-  }, []);
+  }, [showToast]);
 
   // 2. Fetch Drive files when token or folder changes
   const loadFiles = useCallback(
@@ -397,7 +397,6 @@ export default function App() {
           setCachedAccessToken(null);
           downloadManager.setAccessToken(null);
           syncEngine.setAccessToken(null);
-          setNeedsAuth(true);
           showToast('Sessão do Google Drive expirada. Conecte novamente.', 'error');
         } else {
           showToast(err?.message || 'Erro ao carregar arquivos do Drive.', 'error');
@@ -425,7 +424,6 @@ export default function App() {
         setToken(res.accessToken);
         downloadManager.setAccessToken(res.accessToken);
         syncEngine.setAccessToken(res.accessToken);
-        setNeedsAuth(false);
         showToast('Google Drive conectado com sucesso!', 'success');
       }
     } catch (err: any) {
@@ -450,7 +448,6 @@ export default function App() {
     setUser(null);
     setToken(null);
     setFiles([]);
-    setNeedsAuth(true);
     showToast('Você desconectou da conta Google.', 'info');
   };
 
@@ -580,7 +577,7 @@ export default function App() {
   };
 
   const handleSelectAll = (ids?: string[]) => {
-    const targetIds = ids && ids.length > 0 ? ids : files.map((f) => f.id);
+    const targetIds = ids !== undefined ? ids : files.map((f) => f.id);
     setSelectedFileIds(new Set(targetIds));
   };
 
@@ -1018,7 +1015,6 @@ export default function App() {
       setCachedAccessToken(res.accessToken);
       downloadManager.setAccessToken(res.accessToken);
       syncEngine.setAccessToken(res.accessToken);
-      setNeedsAuth(false);
       return res.accessToken;
     } catch (err: any) {
       console.error('Erro ao renovar token Google:', err);
@@ -1269,6 +1265,9 @@ export default function App() {
   };
 
   const handleConfirmFreshDownloadAllZip = async () => {
+    if (localDirHandle) {
+      await verifyPermission(localDirHandle, true);
+    }
     let activeToken = token;
     if (isTokenLikelyExpired()) {
       const refreshed = await renewAccessTokenOnClick();
@@ -1279,6 +1278,9 @@ export default function App() {
   };
 
   const handleResumeDownloadAllZip = async () => {
+    if (localDirHandle) {
+      await verifyPermission(localDirHandle, true);
+    }
     let activeToken = token;
     if (isTokenLikelyExpired()) {
       const refreshed = await renewAccessTokenOnClick();
@@ -1327,9 +1329,20 @@ export default function App() {
   const handleRenewDownloadAllAuth = async () => {
     setIsRenewingDownloadAllAuth(true);
     try {
+      if (localDirHandle) {
+        await verifyPermission(localDirHandle, true);
+      }
       const refreshed = await renewAccessTokenOnClick();
       if (!refreshed) return;
       const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
+      if (checkpoint) {
+        setDownloadAllProgress((prev) => ({
+          ...prev,
+          startedAt: Date.now(),
+          originalStartedAt: checkpoint.createdAt,
+          priorElapsedMs: checkpoint.elapsedMs,
+        }));
+      }
       setIsDownloadAllAuthExpired(false);
       setDownloadAllErrorRecovery(null);
       void runDownloadAllZip(checkpoint !== null, refreshed);

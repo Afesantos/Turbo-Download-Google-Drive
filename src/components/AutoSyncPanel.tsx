@@ -4,17 +4,14 @@ import {
   Clock,
   Play,
   Pause,
-  Eye,
-  CheckCircle2,
   Trash2,
   Activity,
   FolderSync,
-  ListCollapse,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
 import { WatchedItem, SyncLogEntry } from '../services/syncEngine';
-import { formatTimeAgo, formatDateTime } from '../utils/formatters';
+import { formatTimeAgo } from '../utils/formatters';
 
 interface AutoSyncPanelProps {
   isActive: boolean;
@@ -260,7 +257,12 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
                 return (
                   <div key={log.id} className="flex items-start space-x-2 leading-relaxed">
                     <span className="text-slate-600 shrink-0">
-                      {new Date(log.timestamp).toLocaleTimeString('pt-BR')}
+                      {new Date(log.timestamp).toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                      })}
                     </span>
                     <span className={color}>• {log.message}</span>
                   </div>

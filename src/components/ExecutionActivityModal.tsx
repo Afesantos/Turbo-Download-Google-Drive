@@ -1,13 +1,10 @@
 import React from 'react';
 import {
   Activity,
-  CheckCircle2,
-  AlertCircle,
   RefreshCw,
   Flame,
   HardDrive,
   Cpu,
-  Clock,
   X,
   Radio,
   Terminal,
@@ -15,7 +12,7 @@ import {
 } from 'lucide-react';
 import { DownloadTask, SpeedTelemetry } from '../services/downloadManager';
 import { SyncEngineState } from '../services/syncEngine';
-import { formatBytes, formatSpeed, formatDateTime } from '../utils/formatters';
+import { formatBytes, formatSpeed } from '../utils/formatters';
 
 interface ExecutionActivityModalProps {
   isOpen: boolean;
@@ -40,7 +37,6 @@ export const ExecutionActivityModal: React.FC<ExecutionActivityModalProps> = ({
 
   const activeTasks = tasks.filter((t) => t.status === 'downloading');
   const queuedTasks = tasks.filter((t) => t.status === 'queued' || t.status === 'paused');
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">

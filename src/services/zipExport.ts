@@ -65,6 +65,41 @@ const countZipEntries = (zip: JSZip): { fileCount: number; folderCount: number }
   return { fileCount, folderCount };
 };
 
+const ZIP_DOWNLOAD_CONCURRENCY = 4;
+
+const INCOMPRESSIBLE_EXT_RE =
+  /\.(jpe?g|png|webp|gif|heic|avif|mp4|mov|m4v|avi|mkv|webm|mp3|aac|ogg|flac|m4a|zip|rar|7z|gz|bz2|xz|pdf|docx|xlsx|pptx)$/i;
+
+const getZipFileOptions = (fileName: string) => {
+  if (INCOMPRESSIBLE_EXT_RE.test(fileName)) {
+    return { compression: 'STORE' as const };
+  }
+  return { compression: 'DEFLATE' as const, compressionOptions: { level: 4 } };
+};
+
+const sleepAbortable = (ms: number, signal?: AbortSignal): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Operação cancelada pelo usuário.', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Operação cancelada pelo usuário.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+};
+
+const isRetryableTransientError = (err: any): boolean => {
+  const status = err?.status;
+  return status === 429 || (typeof status === 'number' && status >= 500 && status < 600);
+};
+
 const createPeakSpeedTracker = () => {
   let windowStart = Date.now();
   let windowBytes = 0;
@@ -305,79 +340,134 @@ export const exportSelectedFilesToZip = async (
     return Math.min(89, 10 + Math.round((processedItems / Math.max(1, totalItems)) * 79));
   };
 
-  for (const item of allDownloadItems) {
-    if (signal?.aborted) {
+  const workerCount = Math.min(ZIP_DOWNLOAD_CONCURRENCY, Math.max(1, allDownloadItems.length));
+  const inFlightBytesByWorker = new Array<number>(workerCount).fill(0);
+  const sumInFlight = () => inFlightBytesByWorker.reduce((a, b) => a + b, 0);
+  let nextIndex = 0;
+  let lastUiUpdate = 0;
+  let fatalError: any = null;
+  const poolAbortController = new AbortController();
+
+  const onOuterAbort = () => poolAbortController.abort();
+  if (signal) {
+    if (signal.aborted) {
       throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
     }
+    signal.addEventListener('abort', onOuterAbort, { once: true });
+  }
 
-    const displayLabel = item.path ? `${item.path}${item.file.name}` : item.file.name;
-
-    onProgress?.({
-      phase: 'downloading',
-      percent: calcDownloadPercent(committedBytes),
-      currentItem: displayLabel,
-      processedFiles: processedItems,
-      totalFiles: totalItems,
-      folderCount: Math.max(scannedFolders, uniqueFolders.size),
-      discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
-      downloadedBytes: committedBytes,
-      totalBytesExpected,
-      startedAt,
-      scanStartedAt,
-      scanCompletedAt,
-      downloadStartedAt,
-    });
-
-    try {
-      const { stream, finalFileName } = await downloadFileStream(
-        accessToken,
-        item.file,
-        undefined,
-        signal
-      );
-
-      let inFlightBytes = 0;
-      let lastUiUpdate = Date.now();
-      const blob = await readStreamWithAbort(stream, signal, (chunkBytes) => {
-        inFlightBytes += chunkBytes;
-        speedTracker.record(chunkBytes);
-        const now = Date.now();
-        if (now - lastUiUpdate >= 120) {
-          lastUiUpdate = now;
-          onProgress?.({
-            phase: 'downloading',
-            percent: calcDownloadPercent(committedBytes + inFlightBytes),
-            currentItem: displayLabel,
-            processedFiles: processedItems,
-            totalFiles: totalItems,
-            folderCount: Math.max(scannedFolders, uniqueFolders.size),
-            discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
-            downloadedBytes: committedBytes + inFlightBytes,
-            totalBytesExpected,
-            startedAt,
-            scanStartedAt,
-            scanCompletedAt,
-            downloadStartedAt,
-          });
-        }
-      });
-
-      if (signal?.aborted) {
+  const runWorker = async (workerIdx: number) => {
+    while (!fatalError) {
+      if (poolAbortController.signal.aborted) {
         throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
       }
 
-      const zipPath = getUniqueZipPath(item.path, finalFileName, usedZipPathsLower);
-      zip.file(zipPath, blob);
-      committedBytes += blob.size;
-      downloadedCount++;
-    } catch (err: any) {
-      if (err?.name === 'AbortError' || signal?.aborted || err?.status === 401) {
-        throw err;
+      const itemIdx = nextIndex++;
+      if (itemIdx >= allDownloadItems.length) break;
+
+      const item = allDownloadItems[itemIdx];
+      const displayLabel = item.path ? `${item.path}${item.file.name}` : item.file.name;
+
+      const maybeEmit = (force: boolean = false) => {
+        const now = Date.now();
+        if (!force && now - lastUiUpdate < 120) return;
+        lastUiUpdate = now;
+        const totalBytesNow = committedBytes + sumInFlight();
+        onProgress?.({
+          phase: 'downloading',
+          percent: calcDownloadPercent(totalBytesNow),
+          currentItem: displayLabel,
+          processedFiles: processedItems,
+          totalFiles: totalItems,
+          folderCount: Math.max(scannedFolders, uniqueFolders.size),
+          discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
+          downloadedBytes: totalBytesNow,
+          totalBytesExpected,
+          startedAt,
+          scanStartedAt,
+          scanCompletedAt,
+          downloadStartedAt,
+        });
+      };
+
+      maybeEmit(processedItems === 0 && itemIdx === 0);
+
+      try {
+        let blob: Blob | null = null;
+        let finalFileName = item.file.name;
+
+        for (let attempt = 0; attempt <= 2; attempt++) {
+          inFlightBytesByWorker[workerIdx] = 0;
+          try {
+            const streamRes = await downloadFileStream(
+              accessToken,
+              item.file,
+              undefined,
+              poolAbortController.signal
+            );
+            finalFileName = streamRes.finalFileName;
+            blob = await readStreamWithAbort(
+              streamRes.stream,
+              poolAbortController.signal,
+              (chunkBytes) => {
+                inFlightBytesByWorker[workerIdx] += chunkBytes;
+                speedTracker.record(chunkBytes);
+                maybeEmit(false);
+              }
+            );
+            break;
+          } catch (attemptErr: any) {
+            inFlightBytesByWorker[workerIdx] = 0;
+            if (
+              attemptErr?.name === 'AbortError' ||
+              poolAbortController.signal.aborted ||
+              attemptErr?.status === 401
+            ) {
+              throw attemptErr;
+            }
+            if (isRetryableTransientError(attemptErr) && attempt < 2) {
+              await sleepAbortable(attempt === 0 ? 800 : 2000, poolAbortController.signal);
+              continue;
+            }
+            throw attemptErr;
+          }
+        }
+
+        inFlightBytesByWorker[workerIdx] = 0;
+        if (poolAbortController.signal.aborted || !blob) {
+          throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+        }
+
+        const zipPath = getUniqueZipPath(item.path, finalFileName, usedZipPathsLower);
+        zip.file(zipPath, blob, getZipFileOptions(zipPath));
+        committedBytes += blob.size;
+        downloadedCount++;
+        processedItems++;
+        maybeEmit(false);
+      } catch (err: any) {
+        inFlightBytesByWorker[workerIdx] = 0;
+        if (err?.name === 'AbortError' || poolAbortController.signal.aborted || err?.status === 401) {
+          if (!fatalError) fatalError = err;
+          poolAbortController.abort();
+          throw err;
+        }
+        zipErrorCount++;
+        processedItems++;
+        console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
       }
-      zipErrorCount++;
-      console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
     }
-    processedItems++;
+  };
+
+  try {
+    await Promise.all(Array.from({ length: workerCount }, (_, idx) => runWorker(idx)));
+  } catch (err) {
+    throw fatalError || err;
+  } finally {
+    signal?.removeEventListener('abort', onOuterAbort);
+  }
+
+  if (fatalError) {
+    throw fatalError;
   }
 
   if (signal?.aborted) {
@@ -412,8 +502,6 @@ export const exportSelectedFilesToZip = async (
   const zipBlob = await zip.generateAsync(
     {
       type: 'blob',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
     },
     (metadata) => {
       if (signal?.aborted) {
@@ -756,7 +844,7 @@ export const exportAllDriveToZip = async (
         for (const comp of saved.meta.completedItems || []) {
           const blob = blobByPath.get(comp.zipPath);
           if (blob) {
-            zip.file(comp.zipPath, blob);
+            zip.file(comp.zipPath, blob, getZipFileOptions(comp.zipPath));
             usedZipPathsLower.add(comp.zipPath.toLowerCase());
             completedFileIds.add(comp.fileId);
             completedItems.push(comp);
@@ -858,134 +946,187 @@ export const exportAllDriveToZip = async (
     );
 
     checkpointMeta = buildCurrentMeta();
+    const activeCheckpointMeta = checkpointMeta;
 
-    await saveTempRecoveryManifest(checkpointMeta, targetDirHandle, 'in_progress');
+    await saveTempRecoveryManifest(activeCheckpointMeta, targetDirHandle, 'in_progress');
 
+    const pendingItems = allDriveFiles.filter((item) => !completedFileIds.has(item.file.id));
     let processedItems = completedFileIds.size;
     let downloadedBytes = committedBytes;
 
-    for (const item of allDriveFiles) {
-      if (signal?.aborted) {
+    const calcDownloadPercent = (currentBytes: number) => {
+      if (totalBytesExpected > 0) {
+        return Math.min(89, 10 + Math.round((currentBytes / totalBytesExpected) * 79));
+      }
+      return Math.min(89, 10 + Math.round((processedItems / Math.max(1, totalItems)) * 79));
+    };
+
+    const workerCount = Math.min(ZIP_DOWNLOAD_CONCURRENCY, Math.max(1, pendingItems.length));
+    const inFlightBytesByWorker = new Array<number>(workerCount).fill(0);
+    const sumInFlight = () => inFlightBytesByWorker.reduce((a, b) => a + b, 0);
+    let nextIndex = 0;
+    let lastUiUpdate = 0;
+    let fatalError: any = null;
+    const poolAbortController = new AbortController();
+
+    const onOuterAbort = () => poolAbortController.abort();
+    if (signal) {
+      if (signal.aborted) {
         throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
       }
+      signal.addEventListener('abort', onOuterAbort, { once: true });
+    }
 
-      if (completedFileIds.has(item.file.id)) {
-        continue;
-      }
-
-      const sanitizedSegments = item.pathSegments.map(sanitizeSegment).filter(Boolean);
-      const folderPath = sanitizedSegments.join('/');
-      if (folderPath) uniqueFolders.add(folderPath);
-      const folderPrefix = folderPath ? `${folderPath}/` : '';
-      const displayLabel = folderPath ? `${folderPath}/${item.file.name}` : item.file.name;
-
-      const calcDownloadPercent = (currentBytes: number) => {
-        if (totalBytesExpected > 0) {
-          return Math.min(89, 10 + Math.round((currentBytes / totalBytesExpected) * 79));
-        }
-        return Math.min(89, 10 + Math.round((processedItems / Math.max(1, totalItems)) * 79));
-      };
-
-      emitProgress({
-        phase: 'downloading',
-        percent: calcDownloadPercent(committedBytes),
-        currentItem: displayLabel,
-        processedFiles: processedItems,
-        totalFiles: totalItems,
-        folderCount: Math.max(scannedFolders, uniqueFolders.size),
-        discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
-        downloadedBytes: committedBytes,
-        totalBytesExpected,
-        scanCompletedAt,
-        downloadStartedAt,
-        initialResumedBytes,
-        initialResumedFiles,
-      });
-
-      try {
-        const { stream, finalFileName } = await downloadFileStream(
-          accessToken,
-          item.file,
-          undefined,
-          signal
-        );
-
-        let inFlightBytes = 0;
-        let lastUiUpdate = Date.now();
-        const blob = await readStreamWithAbort(stream, signal, (chunkBytes) => {
-          inFlightBytes += chunkBytes;
-          speedTracker.record(chunkBytes);
-          const now = Date.now();
-          if (now - lastUiUpdate >= 120) {
-            lastUiUpdate = now;
-            emitProgress({
-              phase: 'downloading',
-              percent: calcDownloadPercent(committedBytes + inFlightBytes),
-              currentItem: displayLabel,
-              processedFiles: processedItems,
-              totalFiles: totalItems,
-              folderCount: Math.max(scannedFolders, uniqueFolders.size),
-              discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
-              downloadedBytes: committedBytes + inFlightBytes,
-              totalBytesExpected,
-              scanCompletedAt,
-              downloadStartedAt,
-              initialResumedBytes,
-              initialResumedFiles,
-            });
-          }
-        });
-
-        if (signal?.aborted) {
+    const runDriveWorker = async (workerIdx: number) => {
+      while (!fatalError) {
+        if (poolAbortController.signal.aborted) {
           throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
         }
 
-        const zipPath = getUniqueZipPath(folderPrefix, finalFileName, usedZipPathsLower);
-        zip.file(zipPath, blob);
+        const itemIdx = nextIndex++;
+        if (itemIdx >= pendingItems.length) break;
 
-        committedBytes += blob.size;
-        downloadedBytes = committedBytes;
-        downloadedCount++;
-        processedItems++;
+        const item = pendingItems[itemIdx];
+        const sanitizedSegments = item.pathSegments.map(sanitizeSegment).filter(Boolean);
+        const folderPath = sanitizedSegments.join('/');
+        if (folderPath) uniqueFolders.add(folderPath);
+        const folderPrefix = folderPath ? `${folderPath}/` : '';
+        const displayLabel = folderPath ? `${folderPath}/${item.file.name}` : item.file.name;
 
-        completedFileIds.add(item.file.id);
-        completedItems.push({
-          fileId: item.file.id,
-          zipPath,
-          byteSize: blob.size,
-        });
-        const now = Date.now();
-        checkpointMeta.updatedAt = now;
-        checkpointMeta.completedItems = completedItems;
-        checkpointMeta.usedZipPathsLower = Array.from(usedZipPathsLower);
-        checkpointMeta.uniqueFolders = Array.from(uniqueFolders);
-        checkpointMeta.folderCount = Math.max(scannedFolders, uniqueFolders.size);
-        checkpointMeta.downloadedBytes = committedBytes;
-        checkpointMeta.accumulatedElapsedMs = priorElapsedMs + Math.max(0, now - startedAt);
+        const maybeEmit = (force: boolean = false) => {
+          const now = Date.now();
+          if (!force && now - lastUiUpdate < 120) return;
+          lastUiUpdate = now;
+          const totalBytesNow = committedBytes + sumInFlight();
+          emitProgress({
+            phase: 'downloading',
+            percent: calcDownloadPercent(totalBytesNow),
+            currentItem: displayLabel,
+            processedFiles: processedItems,
+            totalFiles: totalItems,
+            folderCount: Math.max(scannedFolders, uniqueFolders.size),
+            discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
+            downloadedBytes: totalBytesNow,
+            totalBytesExpected,
+            scanCompletedAt,
+            downloadStartedAt,
+            initialResumedBytes,
+            initialResumedFiles,
+          });
+        };
 
-        await saveZipAllCheckpointFile(zipPath, blob, checkpointMeta);
-        if (downloadedCount % 10 === 0) {
-          await saveTempRecoveryManifest(checkpointMeta, targetDirHandle, 'in_progress');
+        maybeEmit(itemIdx === 0);
+
+        try {
+          let blob: Blob | null = null;
+          let finalFileName = item.file.name;
+
+          for (let attempt = 0; attempt <= 2; attempt++) {
+            inFlightBytesByWorker[workerIdx] = 0;
+            try {
+              const streamRes = await downloadFileStream(
+                accessToken,
+                item.file,
+                undefined,
+                poolAbortController.signal
+              );
+              finalFileName = streamRes.finalFileName;
+              blob = await readStreamWithAbort(
+                streamRes.stream,
+                poolAbortController.signal,
+                (chunkBytes) => {
+                  inFlightBytesByWorker[workerIdx] += chunkBytes;
+                  speedTracker.record(chunkBytes);
+                  maybeEmit(false);
+                }
+              );
+              break;
+            } catch (attemptErr: any) {
+              inFlightBytesByWorker[workerIdx] = 0;
+              if (
+                attemptErr?.name === 'AbortError' ||
+                poolAbortController.signal.aborted ||
+                attemptErr?.status === 401
+              ) {
+                throw attemptErr;
+              }
+              if (isRetryableTransientError(attemptErr) && attempt < 2) {
+                await sleepAbortable(attempt === 0 ? 800 : 2000, poolAbortController.signal);
+                continue;
+              }
+              throw attemptErr;
+            }
+          }
+
+          inFlightBytesByWorker[workerIdx] = 0;
+          if (poolAbortController.signal.aborted || !blob) {
+            throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+          }
+
+          const zipPath = getUniqueZipPath(folderPrefix, finalFileName, usedZipPathsLower);
+          zip.file(zipPath, blob, getZipFileOptions(zipPath));
+
+          committedBytes += blob.size;
+          downloadedBytes = committedBytes;
+          downloadedCount++;
+          processedItems++;
+
+          completedFileIds.add(item.file.id);
+          completedItems.push({
+            fileId: item.file.id,
+            zipPath,
+            byteSize: blob.size,
+          });
+          const now = Date.now();
+          activeCheckpointMeta.updatedAt = now;
+          activeCheckpointMeta.completedItems = completedItems;
+          activeCheckpointMeta.usedZipPathsLower = Array.from(usedZipPathsLower);
+          activeCheckpointMeta.uniqueFolders = Array.from(uniqueFolders);
+          activeCheckpointMeta.folderCount = Math.max(scannedFolders, uniqueFolders.size);
+          activeCheckpointMeta.downloadedBytes = committedBytes;
+          activeCheckpointMeta.accumulatedElapsedMs = priorElapsedMs + Math.max(0, now - startedAt);
+
+          const shouldPersistManifest = downloadedCount % 10 === 0;
+          await saveZipAllCheckpointFile(zipPath, blob, activeCheckpointMeta);
+          if (shouldPersistManifest) {
+            await saveTempRecoveryManifest(activeCheckpointMeta, targetDirHandle, 'in_progress');
+          }
+          maybeEmit(false);
+        } catch (err: any) {
+          inFlightBytesByWorker[workerIdx] = 0;
+          const isNetworkError =
+            err instanceof TypeError || (typeof navigator !== 'undefined' && !navigator.onLine);
+          const isRecoverableApiError =
+            err?.status === 401 ||
+            err?.status === 429 ||
+            (typeof err?.status === 'number' && err.status >= 500);
+          if (
+            err?.name === 'AbortError' ||
+            poolAbortController.signal.aborted ||
+            isRecoverableApiError ||
+            isNetworkError
+          ) {
+            if (!fatalError) fatalError = err;
+            poolAbortController.abort();
+            throw err;
+          }
+          console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
+          zipErrorCount++;
+          processedItems++;
         }
-      } catch (err: any) {
-        const isNetworkError =
-          err instanceof TypeError || (typeof navigator !== 'undefined' && !navigator.onLine);
-        const isRecoverableApiError =
-          err?.status === 401 ||
-          err?.status === 429 ||
-          (typeof err?.status === 'number' && err.status >= 500);
-        if (
-          err?.name === 'AbortError' ||
-          signal?.aborted ||
-          isRecoverableApiError ||
-          isNetworkError
-        ) {
-          throw err;
-        }
-        console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
-        zipErrorCount++;
-        processedItems++;
       }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: workerCount }, (_, idx) => runDriveWorker(idx)));
+    } catch (err) {
+      throw fatalError || err;
+    } finally {
+      signal?.removeEventListener('abort', onOuterAbort);
+    }
+
+    if (fatalError) {
+      throw fatalError;
     }
 
     if (signal?.aborted) {
@@ -1020,8 +1161,6 @@ export const exportAllDriveToZip = async (
     const zipBlob = await zip.generateAsync(
       {
         type: 'blob',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 6 },
       },
       (metadata) => {
         if (signal?.aborted) {

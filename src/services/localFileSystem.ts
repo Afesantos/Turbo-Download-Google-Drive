@@ -29,9 +29,14 @@ export const isFileSystemAccessSupported = (): boolean => {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 };
 
-// Open IndexedDB instance
+let cachedDbPromise: Promise<IDBDatabase> | null = null;
+
+// Open cached IndexedDB instance
 const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
+  if (cachedDbPromise) {
+    return cachedDbPromise;
+  }
+  cachedDbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -39,9 +44,23 @@ const openDB = (): Promise<IDBDatabase> => {
         db.createObjectStore(STORE_NAME);
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        cachedDbPromise = null;
+      };
+      db.onclose = () => {
+        cachedDbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      cachedDbPromise = null;
+      reject(request.error);
+    };
   });
+  return cachedDbPromise;
 };
 
 // Store directory handle in IndexedDB
@@ -278,8 +297,17 @@ export const writeBufferToLocalFile = async (
   const dir = await getOrCreateSubdirectory(targetDirHandle, pathSegments);
   const fileHandle = await getUniqueFileHandle(dir, fileName);
   const writable = await fileHandle.createWritable({ keepExistingData: false });
-  await (writable as any).write(data);
-  await writable.close();
+  try {
+    await (writable as any).write(data);
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort();
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 };
 
 // Overwrite/create an exact-name temporary file directly in targetDirHandle

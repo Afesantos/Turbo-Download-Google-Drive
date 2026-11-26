@@ -121,9 +121,15 @@ const isCheckpointUsable = (meta: ZipAllCheckpointMeta | null | undefined): meta
   return false;
 };
 
+let cachedCheckpointDbPromise: Promise<IDBDatabase> | null = null;
+
 const openCheckpointDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
+  if (cachedCheckpointDbPromise) {
+    return cachedCheckpointDbPromise;
+  }
+  cachedCheckpointDbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
+      cachedCheckpointDbPromise = null;
       reject(new Error('IndexedDB indisponível'));
       return;
     }
@@ -137,9 +143,23 @@ const openCheckpointDB = (): Promise<IDBDatabase> => {
         db.createObjectStore(BLOB_STORE, { keyPath: 'zipPath' });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        cachedCheckpointDbPromise = null;
+      };
+      db.onclose = () => {
+        cachedCheckpointDbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      cachedCheckpointDbPromise = null;
+      reject(request.error);
+    };
   });
+  return cachedCheckpointDbPromise;
 };
 
 export const saveZipAllCheckpointMeta = async (meta: ZipAllCheckpointMeta): Promise<void> => {
@@ -151,7 +171,6 @@ export const saveZipAllCheckpointMeta = async (meta: ZipAllCheckpointMeta): Prom
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-    db.close();
   } catch (err) {
     console.warn('Não foi possível salvar metadados do checkpoint ZIP:', err);
   }
@@ -171,7 +190,6 @@ export const saveZipAllCheckpointFile = async (
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-    db.close();
   } catch (err) {
     console.warn('Não foi possível persistir arquivo no checkpoint ZIP:', err);
   }
@@ -186,7 +204,6 @@ const readIdbCheckpointMeta = async (): Promise<ZipAllCheckpointMeta | null> => 
       req.onsuccess = () => resolve((req.result as ZipAllCheckpointMeta) || null);
       req.onerror = () => resolve(null);
     });
-    db.close();
     return isCheckpointUsable(result) ? result : null;
   } catch {
     return null;
@@ -299,7 +316,6 @@ export const loadZipAllCheckpointData = async (
         blobsReq.onsuccess = () => resolve((blobsReq.result as StoredZipBlobRecord[]) || []);
         blobsReq.onerror = () => resolve([]);
       });
-      db.close();
     } catch {
       blobs = [];
     }
@@ -332,7 +348,6 @@ export const clearZipAllCheckpoint = async (): Promise<void> => {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-    db.close();
   } catch (err) {
     console.warn('Erro ao limpar checkpoint ZIP:', err);
   }

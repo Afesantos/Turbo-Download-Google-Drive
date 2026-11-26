@@ -57,10 +57,15 @@ class SyncEngine {
   private pollTimer: any = null;
   private listeners: Set<SyncStateListener> = new Set();
   private accessToken: string | null = null;
+  private onAuthExpiredCallback: (() => void) | null = null;
 
   constructor() {
     this.loadStateFromStorage();
     this.startPollingLoop();
+  }
+
+  public setOnAuthExpired(cb: (() => void) | null) {
+    this.onAuthExpiredCallback = cb;
   }
 
   public setAccessToken(token: string | null) {
@@ -236,12 +241,28 @@ class SyncEngine {
         await this.checkSingleWatchedItem(item);
       }
     } catch (err: any) {
+      if (err?.status === 401) {
+        this.handleTokenExpired();
+        return;
+      }
       console.error('Erro durante checagem de sincronização:', err);
       this.addLog('error', `Erro na sincronização: ${err?.message || 'Falha de rede'}`);
     } finally {
       this.isChecking = false;
       this.notify();
     }
+  }
+
+  private handleTokenExpired() {
+    this.accessToken = null;
+    this.isActive = false;
+    this.stopPollingLoop();
+    this.addLog(
+      'error',
+      'Sessão do Google Drive expirada. Sincronização automática pausada até reconectar.'
+    );
+    this.notify();
+    this.onAuthExpiredCallback?.();
   }
 
   private async checkSingleWatchedItem(item: WatchedItem) {
@@ -281,7 +302,10 @@ class SyncEngine {
           });
           this.persistState();
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.status === 401) {
+          throw err;
+        }
         console.warn(`Erro ao verificar arquivo monitorado ${item.name}:`, err);
       }
     } else {
@@ -320,7 +344,10 @@ class SyncEngine {
           downloadManager.enqueueFiles(changedFiles);
           this.persistState();
         }
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.status === 401) {
+          throw err;
+        }
         console.warn(`Erro ao verificar pasta monitorada ${item.name}:`, err);
       }
     }

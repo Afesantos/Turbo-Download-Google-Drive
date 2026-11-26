@@ -1,21 +1,15 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Download,
   Flame,
-  CheckCircle,
   Square,
   RefreshCw,
   HardDrive,
-  FileText,
-  Sparkles,
   Cpu,
-  TrendingUp,
-  X,
-  Minimize2,
-  Cog,
+  Calendar,
 } from 'lucide-react';
 import { DownloadTask, SpeedTelemetry } from '../services/downloadManager';
 import { formatBytes, formatSpeed } from '../utils/formatters';
+import { formatDateTimeClock } from '../utils/zipTiming';
 
 interface CenterProgressOverlayProps {
   tasks: DownloadTask[];
@@ -33,10 +27,25 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
   concurrency,
 }) => {
   const activeTasks = tasks.filter((t) => t.status === 'downloading');
-  const queuedTasks = tasks.filter((t) => t.status === 'queued');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
 
   const isDownloading = telemetry.hasActiveDownloads || activeTasks.length > 0;
+  const sessionStartRef = useRef<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    if (!isDownloading) {
+      sessionStartRef.current = null;
+      return;
+    }
+    const now = Date.now();
+    if (!sessionStartRef.current) {
+      sessionStartRef.current = now;
+    }
+    setNowMs(now);
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isDownloading]);
 
   // Calculate overall bytes and percentage across all current active and queued tasks
   const relevantTasks = tasks.filter(
@@ -62,6 +71,17 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
   // Only show when downloads are active
   if (!isDownloading) {
     return null;
+  }
+
+  const startTimestamp = sessionStartRef.current || nowMs;
+  const startDateTimeLabel = formatDateTimeClock(startTimestamp);
+  let predictedEndDateTimeLabel = 'Calculando...';
+  const remainingBytes = Math.max(0, totalBytesExpected - totalBytesDownloaded);
+  if (telemetry.currentSpeedBytes > 0 && totalBytesExpected > 0 && remainingBytes > 0) {
+    const remainingSec = Math.max(1, Math.ceil(remainingBytes / telemetry.currentSpeedBytes));
+    predictedEndDateTimeLabel = formatDateTimeClock(nowMs + remainingSec * 1000);
+  } else if (totalBytesExpected > 0 && remainingBytes === 0) {
+    predictedEndDateTimeLabel = formatDateTimeClock(nowMs);
   }
 
   const currentFile = activeTasks[0]?.file;
@@ -168,6 +188,27 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
             </span>
             <span>
               {completedTasks.length} de {relevantTasks.length} arquivos processados
+            </span>
+          </div>
+        </div>
+
+        {/* Process Start & Predicted End Dates */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+          <div className="bg-slate-950/75 border border-slate-800 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span>Data inicial:</span>
+            </span>
+            <span className="font-mono font-bold text-slate-100 truncate">{startDateTimeLabel}</span>
+          </div>
+
+          <div className="bg-slate-950/75 border border-slate-800 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-slate-400 flex items-center space-x-1.5 shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Data final (prev.):</span>
+            </span>
+            <span className="font-mono font-bold text-emerald-300 truncate">
+              {predictedEndDateTimeLabel}
             </span>
           </div>
         </div>
