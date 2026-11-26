@@ -281,6 +281,7 @@ export interface DriveScanState {
   files: FileWithPath[];
   scannedFolders: number;
   discoveredFolders: number;
+  skippedNonExportableCount?: number;
 }
 
 export const scanDriveRecursivelyResumable = async (
@@ -315,6 +316,7 @@ export const scanDriveRecursivelyResumable = async (
     state.visitedFolderIds.push(current.id);
 
     if (current.pathSegments.length > 0) {
+      uniqueFolderSet.add(current.pathSegments.join('/'));
       onFolderVisited?.(current.pathSegments);
     }
 
@@ -327,12 +329,16 @@ export const scanDriveRecursivelyResumable = async (
     }
 
     for (const item of resp.files) {
-      if (!item.isFolder && !NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType) && !seenFileIds.has(item.id)) {
-        seenFileIds.add(item.id);
-        state.files.push({
-          file: item,
-          pathSegments: current.pathSegments,
-        });
+      if (!item.isFolder) {
+        if (NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
+          state.skippedNonExportableCount = (state.skippedNonExportableCount || 0) + 1;
+        } else if (!seenFileIds.has(item.id)) {
+          seenFileIds.add(item.id);
+          state.files.push({
+            file: item,
+            pathSegments: current.pathSegments,
+          });
+        }
       }
     }
 

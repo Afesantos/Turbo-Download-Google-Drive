@@ -18,6 +18,7 @@ import {
   DriveFile,
   listDriveFiles,
   listAllFilesRecursively,
+  NON_EXPORTABLE_WORKSPACE_TYPES,
 } from './services/drive';
 import {
   pickLocalDirectory,
@@ -176,6 +177,13 @@ export default function App() {
   });
   const zipAbortRef = useRef<AbortController | null>(null);
   const downloadStartTimeRef = useRef<number | null>(null);
+  const directBatchRef = useRef<{
+    startedAt: number;
+    driveFileCount: number;
+    driveFolderSet: Set<string>;
+    localFolderSet: Set<string>;
+    skippedNonExportableCount: number;
+  } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasExplicitDownloadsChoiceRef = useRef<boolean>(false);
 
@@ -190,11 +198,18 @@ export default function App() {
     count: number;
     errorCount: number;
     folderCount: number;
+    driveFileCount?: number;
+    driveFolderCount?: number;
+    skippedNonExportableCount?: number;
     bytes: number;
     elapsedSeconds: number;
+    startedAt?: number;
+    endedAt?: number;
     averageSpeedBytes: number;
     peakSpeedBytes: number;
     isZip?: boolean;
+    zipFileName?: string;
+    wroteToDisk?: boolean;
   }>({
     count: 0,
     errorCount: 0,
@@ -282,39 +297,65 @@ export default function App() {
           updatedTelemetry.errorCount > previousErrorCount);
 
       if (allQueueFinished) {
-        const startTs = downloadStartTimeRef.current;
-        const elapsed = startTs ? Math.max(0, Math.round((Date.now() - startTs) / 1000)) : 0;
+        const endedAt = Date.now();
+        const batchMeta = directBatchRef.current;
+        const startTs = batchMeta?.startedAt || downloadStartTimeRef.current || endedAt;
+        const elapsed = Math.max(0, Math.round((endedAt - startTs) / 1000));
         const batchCount = Math.max(0, updatedTelemetry.completedCount - previousCompletedCount);
         const batchErrors = Math.max(0, updatedTelemetry.errorCount - previousErrorCount);
         const batchBytes = Math.max(0, updatedTelemetry.totalDownloadedBytes - previousTotalBytes);
         const avgSpeed = batchBytes > 0 ? Math.round(batchBytes / Math.max(1, elapsed)) : 0;
 
-        const uniqueFolders = new Set<string>();
+        const uniqueTaskFolders = new Set<string>();
         updatedTasks
           .filter((t) => t.status === 'completed')
           .slice(0, batchCount || 1)
           .forEach((t) => {
             if (t.pathSegments && t.pathSegments.length > 0) {
-              uniqueFolders.add(t.pathSegments.join('/'));
+              let acc = '';
+              for (const raw of t.pathSegments) {
+                const clean = raw.trim().replace(/[<>:"/\\|?*]/g, '_');
+                if (!clean) continue;
+                acc = acc ? `${acc}/${clean}` : clean;
+                uniqueTaskFolders.add(acc);
+              }
             }
           });
+
+        const driveFolderCount = batchMeta
+          ? batchMeta.driveFolderSet.size
+          : uniqueTaskFolders.size;
+        const localFolderCount = batchMeta
+          ? batchMeta.localFolderSet.size
+          : (window as any).electronAPI?.saveFileNative
+          ? uniqueTaskFolders.size
+          : 0;
 
         setDownloadStats({
           count: batchCount,
           errorCount: batchErrors,
-          folderCount: Math.max(1, uniqueFolders.size),
+          folderCount: localFolderCount,
+          driveFileCount: batchMeta?.driveFileCount ?? batchCount + batchErrors,
+          driveFolderCount,
+          skippedNonExportableCount: batchMeta?.skippedNonExportableCount || 0,
           bytes: batchBytes,
           elapsedSeconds: elapsed,
+          startedAt: startTs,
+          endedAt,
           averageSpeedBytes: avgSpeed,
           peakSpeedBytes: updatedTelemetry.peakSpeedBytes,
           isZip: false,
         });
         downloadStartTimeRef.current = null;
+        directBatchRef.current = null;
         previousCompletedCount = updatedTelemetry.completedCount;
         previousErrorCount = updatedTelemetry.errorCount;
         previousTotalBytes = updatedTelemetry.totalDownloadedBytes;
         setIsSuccessModalOpen(true);
-      } else if (updatedTelemetry.completedCount < previousCompletedCount) {
+      } else if (
+        updatedTelemetry.completedCount < previousCompletedCount ||
+        updatedTelemetry.errorCount < previousErrorCount
+      ) {
         // History was cleared
         previousCompletedCount = updatedTelemetry.completedCount;
         previousErrorCount = updatedTelemetry.errorCount;
@@ -552,6 +593,43 @@ export default function App() {
     return breadcrumbs.slice(1).map((b) => b.name);
   };
 
+  const addSegmentsPrefixes = (targetSet: Set<string>, segments: string[]) => {
+    let acc = '';
+    for (const raw of segments) {
+      const clean = raw.trim().replace(/[<>:"/\\|?*]/g, '_');
+      if (!clean) continue;
+      acc = acc ? `${acc}/${clean}` : clean;
+      targetSet.add(acc);
+    }
+  };
+
+  const recordDirectBatchMeta = (
+    batchStart: number,
+    driveFilesCount: number,
+    driveFolderSet: Set<string>,
+    localFolderSet: Set<string>,
+    skippedNonExportableCount: number
+  ) => {
+    const existing =
+      directBatchRef.current && downloadManager.getPendingCount() > 0
+        ? directBatchRef.current
+        : null;
+    if (existing) {
+      existing.driveFileCount += driveFilesCount;
+      existing.skippedNonExportableCount += skippedNonExportableCount;
+      driveFolderSet.forEach((f) => existing.driveFolderSet.add(f));
+      localFolderSet.forEach((f) => existing.localFolderSet.add(f));
+    } else {
+      directBatchRef.current = {
+        startedAt: batchStart,
+        driveFileCount: driveFilesCount,
+        driveFolderSet: new Set(driveFolderSet),
+        localFolderSet: new Set(localFolderSet),
+        skippedNonExportableCount,
+      };
+    }
+  };
+
   // Download & Sync actions
   const handleStartDownload = async () => {
     if (!token) {
@@ -585,13 +663,18 @@ export default function App() {
       const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
       if (aborted) return;
 
+      const batchStartedAt = Date.now();
       setIsMappingFolders(true);
       try {
         const visitedFolders: string[][] = [];
         const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+        const driveFolderSet = new Set<string>();
+        const localFolderSet = new Set<string>();
+        let skippedNonExportableCount = 0;
 
         if (currentFolderSegments.length > 0) {
           visitedFolders.push(currentFolderSegments);
+          addSegmentsPrefixes(driveFolderSet, currentFolderSegments);
         }
 
         for (const item of files) {
@@ -601,11 +684,16 @@ export default function App() {
               item.id,
               [...currentFolderSegments, item.name],
               new Set(),
-              (segs) => visitedFolders.push(segs)
+              (segs) => {
+                visitedFolders.push(segs);
+                addSegmentsPrefixes(driveFolderSet, segs);
+              }
             );
             filesToEnqueue.push(...recursive);
-          } else {
+          } else if (!NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
             filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+          } else {
+            skippedNonExportableCount++;
           }
         }
 
@@ -614,14 +702,24 @@ export default function App() {
           for (const segs of visitedFolders) {
             try {
               await getOrCreateSubdirectory(activeDirHandle, segs);
+              addSegmentsPrefixes(localFolderSet, segs);
             } catch {
               // ignore individual folder errors
             }
           }
+        } else if ((window as any).electronAPI?.saveFileNative) {
+          driveFolderSet.forEach((f) => localFolderSet.add(f));
         }
 
         if (filesToEnqueue.length > 0) {
-          downloadStartTimeRef.current = Date.now();
+          downloadStartTimeRef.current = batchStartedAt;
+          recordDirectBatchMeta(
+            batchStartedAt,
+            filesToEnqueue.length,
+            driveFolderSet,
+            localFolderSet,
+            skippedNonExportableCount
+          );
           downloadManager.enqueueFiles(filesToEnqueue);
           showToast(
             activeDirHandle || (window as any).electronAPI?.saveFileNative
@@ -629,7 +727,24 @@ export default function App() {
               : `Iniciando download de ${filesToEnqueue.length} arquivo(s)!`,
             'success'
           );
-        } else if (activeDirHandle && visitedFolders.length > 0) {
+        } else if (activeDirHandle && localFolderSet.size > 0) {
+          const endedAt = Date.now();
+          setDownloadStats({
+            count: 0,
+            errorCount: 0,
+            folderCount: localFolderSet.size,
+            driveFileCount: 0,
+            driveFolderCount: driveFolderSet.size,
+            skippedNonExportableCount,
+            bytes: 0,
+            elapsedSeconds: Math.max(0, Math.round((endedAt - batchStartedAt) / 1000)),
+            startedAt: batchStartedAt,
+            endedAt,
+            averageSpeedBytes: 0,
+            peakSpeedBytes: 0,
+            isZip: false,
+          });
+          setIsSuccessModalOpen(true);
           showToast('Pastas vazias recriadas com o nome original na pasta destino!', 'success');
         } else {
           showToast('Nenhum arquivo disponível para download.', 'info');
@@ -661,13 +776,18 @@ export default function App() {
     const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
     if (aborted) return;
 
+    const batchStartedAt = Date.now();
     setIsMappingFolders(true);
     try {
       const visitedFolders: string[][] = [];
       const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+      const driveFolderSet = new Set<string>();
+      const localFolderSet = new Set<string>();
+      let skippedNonExportableCount = 0;
 
       if (currentFolderSegments.length > 0) {
         visitedFolders.push(currentFolderSegments);
+        addSegmentsPrefixes(driveFolderSet, currentFolderSegments);
       }
 
       for (const item of selectedItems) {
@@ -678,11 +798,16 @@ export default function App() {
             item.id,
             [...currentFolderSegments, item.name],
             new Set(),
-            (segs) => visitedFolders.push(segs)
+            (segs) => {
+              visitedFolders.push(segs);
+              addSegmentsPrefixes(driveFolderSet, segs);
+            }
           );
           filesToEnqueue.push(...recursiveFiles);
-        } else {
+        } else if (!NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
           filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+        } else {
+          skippedNonExportableCount++;
         }
       }
 
@@ -690,14 +815,24 @@ export default function App() {
         for (const segs of visitedFolders) {
           try {
             await getOrCreateSubdirectory(activeDirHandle, segs);
+            addSegmentsPrefixes(localFolderSet, segs);
           } catch {
             // ignore
           }
         }
+      } else if ((window as any).electronAPI?.saveFileNative) {
+        driveFolderSet.forEach((f) => localFolderSet.add(f));
       }
 
       if (filesToEnqueue.length > 0) {
-        downloadStartTimeRef.current = Date.now();
+        downloadStartTimeRef.current = batchStartedAt;
+        recordDirectBatchMeta(
+          batchStartedAt,
+          filesToEnqueue.length,
+          driveFolderSet,
+          localFolderSet,
+          skippedNonExportableCount
+        );
         downloadManager.enqueueFiles(filesToEnqueue);
         showToast(
           activeDirHandle || (window as any).electronAPI?.saveFileNative
@@ -705,7 +840,24 @@ export default function App() {
             : `${filesToEnqueue.length} arquivo(s) enfileirados para download!`,
           'success'
         );
-      } else if (activeDirHandle && visitedFolders.length > 0) {
+      } else if (activeDirHandle && localFolderSet.size > 0) {
+        const endedAt = Date.now();
+        setDownloadStats({
+          count: 0,
+          errorCount: 0,
+          folderCount: localFolderSet.size,
+          driveFileCount: 0,
+          driveFolderCount: driveFolderSet.size,
+          skippedNonExportableCount,
+          bytes: 0,
+          elapsedSeconds: Math.max(0, Math.round((endedAt - batchStartedAt) / 1000)),
+          startedAt: batchStartedAt,
+          endedAt,
+          averageSpeedBytes: 0,
+          peakSpeedBytes: 0,
+          isZip: false,
+        });
+        setIsSuccessModalOpen(true);
         showToast('Pasta(s) vazia(s) criada(s) com o mesmo nome original na pasta destino!', 'success');
       } else {
         showToast('Nenhum arquivo encontrado nas pastas selecionadas.', 'info');
@@ -725,8 +877,15 @@ export default function App() {
     const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
     if (aborted) return;
 
+    const batchStartedAt = Date.now();
     setIsMappingFolders(true);
     try {
+      const driveFolderSet = new Set<string>();
+      const localFolderSet = new Set<string>();
+      if (currentFolderSegments.length > 0) {
+        addSegmentsPrefixes(driveFolderSet, currentFolderSegments);
+      }
+
       if (file.isFolder) {
         showToast(`Mapeando pasta "${file.name}"...`, 'info');
         const visitedFolders: string[][] = [];
@@ -735,20 +894,45 @@ export default function App() {
           file.id,
           [...currentFolderSegments, file.name],
           new Set(),
-          (segs) => visitedFolders.push(segs)
+          (segs) => {
+            visitedFolders.push(segs);
+            addSegmentsPrefixes(driveFolderSet, segs);
+          }
         );
 
         if (activeDirHandle && visitedFolders.length > 0) {
           for (const segs of visitedFolders) {
             try {
               await getOrCreateSubdirectory(activeDirHandle, segs);
+              addSegmentsPrefixes(localFolderSet, segs);
             } catch {
               // ignore
             }
           }
+        } else if ((window as any).electronAPI?.saveFileNative) {
+          driveFolderSet.forEach((f) => localFolderSet.add(f));
         }
 
         if (recursiveFiles.length === 0) {
+          if (activeDirHandle && localFolderSet.size > 0) {
+            const endedAt = Date.now();
+            setDownloadStats({
+              count: 0,
+              errorCount: 0,
+              folderCount: localFolderSet.size,
+              driveFileCount: 0,
+              driveFolderCount: driveFolderSet.size,
+              skippedNonExportableCount: 0,
+              bytes: 0,
+              elapsedSeconds: Math.max(0, Math.round((endedAt - batchStartedAt) / 1000)),
+              startedAt: batchStartedAt,
+              endedAt,
+              averageSpeedBytes: 0,
+              peakSpeedBytes: 0,
+              isZip: false,
+            });
+            setIsSuccessModalOpen(true);
+          }
           showToast(
             activeDirHandle
               ? `Pasta vazia "${file.name}" criada na pasta destino!`
@@ -757,21 +941,36 @@ export default function App() {
           );
           return;
         }
-        downloadStartTimeRef.current = Date.now();
+        downloadStartTimeRef.current = batchStartedAt;
+        recordDirectBatchMeta(
+          batchStartedAt,
+          recursiveFiles.length,
+          driveFolderSet,
+          localFolderSet,
+          0
+        );
         downloadManager.enqueueFiles(recursiveFiles);
         showToast(
           `Pasta "${file.name}" (${recursiveFiles.length} arquivos) enfileirada com estrutura idêntica!`,
           'success'
         );
       } else {
+        if (NON_EXPORTABLE_WORKSPACE_TYPES.has(file.mimeType)) {
+          showToast(`O item "${file.name}" é um formato Google Workspace não exportável diretamente.`, 'info');
+          return;
+        }
         if (activeDirHandle && currentFolderSegments.length > 0) {
           try {
             await getOrCreateSubdirectory(activeDirHandle, currentFolderSegments);
+            addSegmentsPrefixes(localFolderSet, currentFolderSegments);
           } catch {
             // ignore
           }
+        } else if ((window as any).electronAPI?.saveFileNative) {
+          driveFolderSet.forEach((f) => localFolderSet.add(f));
         }
-        downloadStartTimeRef.current = Date.now();
+        downloadStartTimeRef.current = batchStartedAt;
+        recordDirectBatchMeta(batchStartedAt, 1, driveFolderSet, localFolderSet, 0);
         downloadManager.enqueueFiles([{ file, pathSegments: currentFolderSegments }]);
         showToast(`Download de "${file.name}" iniciado!`, 'success');
       }
@@ -876,19 +1075,30 @@ export default function App() {
         controller.signal,
         getCurrentFolderPath()
       );
-      const elapsed = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+      const endedAt = zipStats.endedAt || Date.now();
+      const elapsed =
+        typeof zipStats.elapsedSeconds === 'number'
+          ? zipStats.elapsedSeconds
+          : Math.max(0, Math.round((endedAt - startTime) / 1000));
       const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
 
       setIsZipModalOpen(false);
       setDownloadStats({
         count: zipStats.fileCount,
-        errorCount: 0,
+        errorCount: zipStats.errorCount || 0,
         folderCount: zipStats.folderCount,
+        driveFileCount: zipStats.driveFileCount,
+        driveFolderCount: zipStats.driveFolderCount,
+        skippedNonExportableCount: zipStats.skippedNonExportableCount || 0,
         bytes: zipStats.totalBytes,
         elapsedSeconds: elapsed,
+        startedAt: zipStats.startedAt || startTime,
+        endedAt,
         averageSpeedBytes: avgSpeed,
-        peakSpeedBytes: avgSpeed,
+        peakSpeedBytes: zipStats.peakSpeedBytes || avgSpeed,
         isZip: true,
+        zipFileName: zipStats.zipFileName,
+        wroteToDisk: zipStats.wroteToDisk,
       });
       setIsSuccessModalOpen(true);
       showToast('Arquivo ZIP gerado com sucesso!', 'success');
@@ -986,22 +1196,30 @@ export default function App() {
         resumeFromCheckpoint,
         user?.displayName || user?.email || null
       );
+      const endedAt = zipStats.endedAt || Date.now();
       const elapsed =
         typeof zipStats.elapsedSeconds === 'number'
           ? zipStats.elapsedSeconds
-          : Math.max(0, Math.round((Date.now() - startTime) / 1000));
+          : Math.max(0, Math.round((endedAt - startTime) / 1000));
       const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
 
       setIsDownloadAllModalOpen(false);
       setDownloadStats({
         count: zipStats.fileCount,
-        errorCount: 0,
+        errorCount: zipStats.errorCount || 0,
         folderCount: zipStats.folderCount,
+        driveFileCount: zipStats.driveFileCount,
+        driveFolderCount: zipStats.driveFolderCount,
+        skippedNonExportableCount: zipStats.skippedNonExportableCount || 0,
         bytes: zipStats.totalBytes,
         elapsedSeconds: elapsed,
+        startedAt: zipStats.startedAt || startTime,
+        endedAt,
         averageSpeedBytes: avgSpeed,
-        peakSpeedBytes: avgSpeed,
+        peakSpeedBytes: zipStats.peakSpeedBytes || avgSpeed,
         isZip: true,
+        zipFileName: zipStats.zipFileName,
+        wroteToDisk: zipStats.wroteToDisk,
       });
       setIsSuccessModalOpen(true);
       showToast('Download completo do Google Drive em ZIP concluído!', 'success');
@@ -1411,13 +1629,20 @@ export default function App() {
         completedCount={downloadStats.count}
         errorCount={downloadStats.errorCount}
         folderCount={downloadStats.folderCount}
+        driveFileCount={downloadStats.driveFileCount}
+        driveFolderCount={downloadStats.driveFolderCount}
+        skippedNonExportableCount={downloadStats.skippedNonExportableCount}
         totalBytes={downloadStats.bytes}
         elapsedSeconds={downloadStats.elapsedSeconds}
+        startedAt={downloadStats.startedAt}
+        endedAt={downloadStats.endedAt}
         averageSpeedBytes={downloadStats.averageSpeedBytes}
         peakSpeedBytes={downloadStats.peakSpeedBytes}
         folderName={localFolderName}
         dirHandle={localDirHandle}
         isZip={downloadStats.isZip}
+        zipFileName={downloadStats.zipFileName}
+        wroteToDisk={downloadStats.wroteToDisk}
         onOpenFolderPicker={() => setIsFolderModalOpen(true)}
       />
 

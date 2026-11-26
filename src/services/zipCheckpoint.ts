@@ -55,6 +55,7 @@ export interface ZipAllCheckpointMeta {
   discoveredFolders?: number;
   accumulatedElapsedMs?: number;
   accumulatedScanElapsedMs?: number;
+  skippedNonExportableCount?: number;
   lastError?: string;
 }
 

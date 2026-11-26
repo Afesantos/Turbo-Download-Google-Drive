@@ -23,14 +23,67 @@ import {
 export interface ZipExportStats {
   fileCount: number;
   folderCount: number;
+  driveFileCount: number;
+  driveFolderCount: number;
+  skippedNonExportableCount?: number;
+  errorCount?: number;
   totalBytes: number;
   elapsedSeconds?: number;
+  startedAt?: number;
+  endedAt?: number;
+  peakSpeedBytes?: number;
+  zipFileName?: string;
+  wroteToDisk?: boolean;
 }
 
 const sanitizeSegment = (name: string): string => {
   const cleaned = name.trim().replace(/[<>:"/\\|?*]/g, '_');
   if (!cleaned || cleaned === '.' || cleaned === '..') return 'arquivo';
   return cleaned;
+};
+
+const addFolderWithAncestors = (folderSet: Set<string>, segments: string[]) => {
+  let acc = '';
+  for (const raw of segments) {
+    const clean = sanitizeSegment(raw);
+    if (!clean) continue;
+    acc = acc ? `${acc}/${clean}` : clean;
+    folderSet.add(acc);
+  }
+};
+
+const countZipEntries = (zip: JSZip): { fileCount: number; folderCount: number } => {
+  let fileCount = 0;
+  let folderCount = 0;
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir) {
+      folderCount++;
+    } else {
+      fileCount++;
+    }
+  }
+  return { fileCount, folderCount };
+};
+
+const createPeakSpeedTracker = () => {
+  let windowStart = Date.now();
+  let windowBytes = 0;
+  let peakBps = 0;
+  return {
+    record: (bytesDelta: number) => {
+      if (bytesDelta <= 0) return;
+      windowBytes += bytesDelta;
+      const now = Date.now();
+      const dtMs = now - windowStart;
+      if (dtMs >= 1000) {
+        const bps = Math.round((windowBytes * 1000) / dtMs);
+        if (bps > peakBps) peakBps = bps;
+        windowStart = now;
+        windowBytes = 0;
+      }
+    },
+    getPeak: (fallbackBps: number = 0) => Math.max(peakBps, fallbackBps),
+  };
 };
 
 const getUniqueZipPath = (
@@ -154,8 +207,10 @@ export const exportSelectedFilesToZip = async (
   // Flatten folders if any while preserving exact Google Drive hierarchy
   const allDownloadItems: { file: DriveFile; path: string }[] = [];
   const uniqueFolders = new Set<string>();
-  if (baseFolderPath) {
-    uniqueFolders.add(baseFolderPath);
+  let skippedNonExportableCount = 0;
+
+  if (sanitizedBaseSegments.length > 0) {
+    addFolderWithAncestors(uniqueFolders, sanitizedBaseSegments);
   }
 
   for (const item of files) {
@@ -171,10 +226,10 @@ export const exportSelectedFilesToZip = async (
         [...sanitizedBaseSegments, item.name],
         new Set<string>(),
         (pathSegments) => {
-          const visitedFolderPath = pathSegments.map(sanitizeSegment).filter(Boolean).join('/');
-          if (visitedFolderPath) {
-            uniqueFolders.add(visitedFolderPath);
-            zip.folder(visitedFolderPath);
+          const sanitized = pathSegments.map(sanitizeSegment).filter(Boolean);
+          if (sanitized.length > 0) {
+            addFolderWithAncestors(uniqueFolders, sanitized);
+            zip.folder(sanitized.join('/'));
           }
         },
         signal,
@@ -200,8 +255,10 @@ export const exportSelectedFilesToZip = async (
 
       for (const rec of recursive) {
         const sanitizedSegments = rec.pathSegments.map(sanitizeSegment).filter(Boolean);
+        if (sanitizedSegments.length > 0) {
+          addFolderWithAncestors(uniqueFolders, sanitizedSegments);
+        }
         const folderPath = sanitizedSegments.join('/');
-        if (folderPath) uniqueFolders.add(folderPath);
         allDownloadItems.push({
           file: rec.file,
           path: folderPath ? `${folderPath}/` : '',
@@ -212,6 +269,8 @@ export const exportSelectedFilesToZip = async (
         file: item,
         path: baseFolderPrefix,
       });
+    } else {
+      skippedNonExportableCount++;
     }
   }
 
@@ -235,7 +294,9 @@ export const exportSelectedFilesToZip = async (
   const usedZipPathsLower = new Set<string>();
   let processedItems = 0;
   let downloadedCount = 0;
+  let zipErrorCount = 0;
   let committedBytes = 0;
+  const speedTracker = createPeakSpeedTracker();
 
   const calcDownloadPercent = (currentBytes: number) => {
     if (totalBytesExpected > 0) {
@@ -279,6 +340,7 @@ export const exportSelectedFilesToZip = async (
       let lastUiUpdate = Date.now();
       const blob = await readStreamWithAbort(stream, signal, (chunkBytes) => {
         inFlightBytes += chunkBytes;
+        speedTracker.record(chunkBytes);
         const now = Date.now();
         if (now - lastUiUpdate >= 120) {
           lastUiUpdate = now;
@@ -312,6 +374,7 @@ export const exportSelectedFilesToZip = async (
       if (err?.name === 'AbortError' || signal?.aborted || err?.status === 401) {
         throw err;
       }
+      zipErrorCount++;
       console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
     }
     processedItems++;
@@ -321,7 +384,14 @@ export const exportSelectedFilesToZip = async (
     throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
   }
 
-  const finalFolderCount = Math.max(1, uniqueFolders.size);
+  uniqueFolders.forEach((folderPath) => {
+    if (folderPath) {
+      zip.folder(folderPath);
+    }
+  });
+
+  const zipEntryCounts = countZipEntries(zip);
+  const finalFolderCount = zipEntryCounts.folderCount;
 
   onProgress?.({
     phase: 'compressing',
@@ -432,10 +502,24 @@ export const exportSelectedFilesToZip = async (
     downloadStartedAt,
   });
 
+  const endedAt = Date.now();
+  const elapsedSeconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  const avgSpeed = zipBlob.size > 0 ? Math.round(zipBlob.size / Math.max(1, elapsedSeconds)) : 0;
+
   return {
-    fileCount: downloadedCount,
-    folderCount: finalFolderCount,
+    fileCount: zipEntryCounts.fileCount || downloadedCount,
+    folderCount: zipEntryCounts.folderCount,
+    driveFileCount: allDownloadItems.length,
+    driveFolderCount: uniqueFolders.size,
+    skippedNonExportableCount,
+    errorCount: zipErrorCount,
     totalBytes: zipBlob.size,
+    elapsedSeconds,
+    startedAt,
+    endedAt,
+    peakSpeedBytes: speedTracker.getPeak(avgSpeed),
+    zipFileName: zipName,
+    wroteToDisk,
   };
 };
 
@@ -489,7 +573,10 @@ export const exportAllDriveToZip = async (
   let checkpointCreatedAt = startedAt;
   let committedBytes = 0;
   let downloadedCount = 0;
+  let zipErrorCount = 0;
+  let skippedNonExportableCount = 0;
   let checkpointMeta: ZipAllCheckpointMeta | null = null;
+  const speedTracker = createPeakSpeedTracker();
 
   let scanState: DriveScanState = {
     pendingFolders: [{ id: 'root', pathSegments: [] }],
@@ -498,6 +585,7 @@ export const exportAllDriveToZip = async (
     files: [],
     scannedFolders: 0,
     discoveredFolders: 1,
+    skippedNonExportableCount: 0,
   };
 
   const emitProgress = (
@@ -547,6 +635,7 @@ export const exportAllDriveToZip = async (
       discoveredFolders: Math.max(discoveredFolders, scanState.discoveredFolders),
       accumulatedElapsedMs: priorElapsedMs + currentSessionElapsed,
       accumulatedScanElapsedMs: currentScanElapsed,
+      skippedNonExportableCount: Math.max(skippedNonExportableCount, scanState.skippedNonExportableCount || 0),
       lastError,
     };
   };
@@ -612,7 +701,11 @@ export const exportAllDriveToZip = async (
           typeof saved.meta.accumulatedElapsedMs === 'number'
             ? Math.max(0, saved.meta.accumulatedElapsedMs)
             : Math.max(0, (saved.meta.updatedAt || checkpointCreatedAt) - checkpointCreatedAt);
-        saved.meta.uniqueFolders.forEach((f) => uniqueFolders.add(f));
+        saved.meta.uniqueFolders.forEach((f) => {
+          const segs = f.split('/').map(sanitizeSegment).filter(Boolean);
+          if (segs.length > 0) addFolderWithAncestors(uniqueFolders, segs);
+        });
+        skippedNonExportableCount = saved.meta.skippedNonExportableCount || 0;
         scanCompleted = saved.meta.scanCompleted !== false;
         priorScanElapsedMs =
           typeof saved.meta.accumulatedScanElapsedMs === 'number'
@@ -633,6 +726,7 @@ export const exportAllDriveToZip = async (
               saved.meta.discoveredFolders ||
                 (saved.meta.scannedFolders || 0) + saved.meta.pendingScanFolders.length
             ),
+            skippedNonExportableCount,
           };
           scannedFolders = scanState.scannedFolders;
           discoveredFolders = scanState.discoveredFolders;
@@ -704,9 +798,9 @@ export const exportAllDriveToZip = async (
         accessToken,
         scanState,
         (pathSegments) => {
-          const visitedFolderPath = pathSegments.map(sanitizeSegment).filter(Boolean).join('/');
-          if (visitedFolderPath) {
-            uniqueFolders.add(visitedFolderPath);
+          const sanitized = pathSegments.map(sanitizeSegment).filter(Boolean);
+          if (sanitized.length > 0) {
+            addFolderWithAncestors(uniqueFolders, sanitized);
           }
         },
         signal,
@@ -740,9 +834,16 @@ export const exportAllDriveToZip = async (
         throw new Error('Nenhum arquivo compatível encontrado no seu Google Drive.');
       }
 
+      skippedNonExportableCount = Math.max(
+        skippedNonExportableCount,
+        scanState.skippedNonExportableCount || 0
+      );
+
       for (const item of allDriveFiles) {
-        const folderPath = item.pathSegments.map(sanitizeSegment).filter(Boolean).join('/');
-        if (folderPath) uniqueFolders.add(folderPath);
+        const sanitized = item.pathSegments.map(sanitizeSegment).filter(Boolean);
+        if (sanitized.length > 0) {
+          addFolderWithAncestors(uniqueFolders, sanitized);
+        }
       }
 
       scanCompleted = true;
@@ -813,6 +914,7 @@ export const exportAllDriveToZip = async (
         let lastUiUpdate = Date.now();
         const blob = await readStreamWithAbort(stream, signal, (chunkBytes) => {
           inFlightBytes += chunkBytes;
+          speedTracker.record(chunkBytes);
           const now = Date.now();
           if (now - lastUiUpdate >= 120) {
             lastUiUpdate = now;
@@ -881,6 +983,7 @@ export const exportAllDriveToZip = async (
           throw err;
         }
         console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);
+        zipErrorCount++;
         processedItems++;
       }
     }
@@ -895,7 +998,8 @@ export const exportAllDriveToZip = async (
       }
     });
 
-    const finalFolderCount = Math.max(1, uniqueFolders.size);
+    const zipEntryCounts = countZipEntries(zip);
+    const finalFolderCount = zipEntryCounts.folderCount;
 
     emitProgress({
       phase: 'compressing',
@@ -1009,11 +1113,24 @@ export const exportAllDriveToZip = async (
       initialResumedFiles,
     });
 
+    const endedAt = Date.now();
+    const elapsedSeconds = Math.max(0, Math.round((priorElapsedMs + (endedAt - startedAt)) / 1000));
+    const avgSpeed = zipBlob.size > 0 ? Math.round(zipBlob.size / Math.max(1, elapsedSeconds)) : 0;
+
     return {
-      fileCount: downloadedCount,
-      folderCount: finalFolderCount,
+      fileCount: zipEntryCounts.fileCount || downloadedCount,
+      folderCount: zipEntryCounts.folderCount,
+      driveFileCount: allDriveFiles.length,
+      driveFolderCount: uniqueFolders.size,
+      skippedNonExportableCount,
+      errorCount: zipErrorCount,
       totalBytes: zipBlob.size,
-      elapsedSeconds: Math.max(0, Math.round((priorElapsedMs + (Date.now() - startedAt)) / 1000)),
+      elapsedSeconds,
+      startedAt: checkpointCreatedAt,
+      endedAt,
+      peakSpeedBytes: speedTracker.getPeak(avgSpeed),
+      zipFileName: zipName,
+      wroteToDisk,
     };
   } catch (err: any) {
     await persistErrorRecoveryFiles(err);
