@@ -39,7 +39,7 @@ export const ExecutionActivityModal: React.FC<ExecutionActivityModalProps> = ({
   if (!isOpen) return null;
 
   const activeTasks = tasks.filter((t) => t.status === 'downloading');
-  const queuedTasks = tasks.filter((t) => t.status === 'queued');
+  const queuedTasks = tasks.filter((t) => t.status === 'queued' || t.status === 'paused');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
 
   return (
@@ -146,7 +146,12 @@ export const ExecutionActivityModal: React.FC<ExecutionActivityModalProps> = ({
                         {task.file.name}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono">
-                        {task.status === 'downloading' ? 'Baixando...' : 'Na fila'} • {formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}
+                        {task.status === 'downloading'
+                          ? 'Baixando...'
+                          : task.status === 'paused'
+                          ? 'Pausado'
+                          : 'Na fila'}{' '}
+                        • {formatBytes(task.downloadedBytes)} / {formatBytes(task.totalBytes)}
                       </span>
                     </div>
 

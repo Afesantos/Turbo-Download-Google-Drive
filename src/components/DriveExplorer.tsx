@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Folder,
   File,
@@ -39,7 +39,7 @@ interface DriveExplorerProps {
   onRefresh: () => void;
   selectedFileIds: Set<string>;
   onToggleSelect: (id: string) => void;
-  onSelectAll: () => void;
+  onSelectAll: (ids?: string[]) => void;
   onClearSelection: () => void;
   onDownloadSelected: () => void;
   onDownloadZip: () => void;
@@ -51,6 +51,7 @@ interface DriveExplorerProps {
   concurrency: number;
   onStartDownload?: () => void;
   onStopDownload?: () => void;
+  onDownloadAllDriveZip?: () => void;
   isDownloading?: boolean;
   isPaused?: boolean;
   hasPendingTasks?: boolean;
@@ -77,6 +78,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
   concurrency,
   onStartDownload,
   onStopDownload,
+  onDownloadAllDriveZip,
   isDownloading = false,
   isPaused = false,
   hasPendingTasks = false,
@@ -87,6 +89,10 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
   >('all');
   const [sortField, setSortField] = useState<'name' | 'size' | 'modifiedTime'>('name');
   const [sortAsc, setSortAsc] = useState<boolean>(true);
+
+  useEffect(() => {
+    setSearchQuery('');
+  }, [breadcrumbs]);
 
   // Filter and sort files
   const filteredFiles = useMemo(() => {
@@ -225,28 +231,15 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
 
         {/* Actions, Refresh and File count */}
         <div className="flex items-center space-x-2 text-xs">
-          {isDownloading ? (
-            onStopDownload && (
-              <button
-                onClick={onStopDownload}
-                className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs shadow-md shadow-rose-600/25 ring-2 ring-rose-500/30 active:scale-95 transition-all"
-                title="Parar downloads imediatamente"
-              >
-                <Square className="w-3.5 h-3.5 fill-current animate-pulse" />
-                <span>Parar o Download</span>
-              </button>
-            )
-          ) : (
-            onStartDownload && (
-              <button
-                onClick={onStartDownload}
-                className="flex items-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all"
-                title="Iniciar o download de arquivos para o computador"
-              >
-                <Play className="w-3.5 h-3.5 fill-white" />
-                <span>{isPaused && hasPendingTasks ? 'Continuar o Download' : 'Iniciar o Download'}</span>
-              </button>
-            )
+          {onDownloadAllDriveZip && (
+            <button
+              onClick={onDownloadAllDriveZip}
+              className="flex items-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all"
+              title="Solicitar permissão e baixar todo o conteúdo do Google Drive em um arquivo .ZIP"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>Baixar Tudo</span>
+            </button>
           )}
 
           <div className="h-4 w-px bg-slate-800 hidden sm:block" />
@@ -374,7 +367,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
             <tr>
               <th className="py-3 px-4 w-10">
                 <button
-                  onClick={allSelected ? onClearSelection : onSelectAll}
+                  onClick={() => (allSelected ? onClearSelection() : onSelectAll(filteredFiles.map((f) => f.id)))}
                   className="text-slate-400 hover:text-white"
                   title={allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
                 >

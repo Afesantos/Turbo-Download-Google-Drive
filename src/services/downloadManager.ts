@@ -104,7 +104,7 @@ class DownloadManager {
     const allTasks = [
       ...Array.from(this.activeTasks.values()),
       ...this.queue,
-      ...this.completedTasks.slice(-30), // keep last 30 for history
+      ...this.completedTasks.slice(0, 30), // keep latest 30 for history
     ];
 
     const currentSpeed = this.isPaused ? 0 : this.calculateCurrentSpeed();
@@ -312,23 +312,25 @@ class DownloadManager {
       return;
     }
 
-    let lastProgressBytes = task.downloadedBytes || 0;
+    let lastRecordedBytes = task.downloadedBytes || 0;
+    let lastSpeedBytes = task.downloadedBytes || 0;
     let lastProgressTime = Date.now();
 
     const handleProgress = (bytes: number, totalExpected?: number) => {
       if (signal.aborted || this.isPaused) return;
 
-      const deltaBytes = bytes - lastProgressBytes;
-      const now = Date.now();
-      const deltaTime = (now - lastProgressTime) / 1000;
-
-      if (deltaBytes > 0) {
-        this.recordBytes(deltaBytes);
+      const incrementalBytes = bytes - lastRecordedBytes;
+      if (incrementalBytes > 0) {
+        this.recordBytes(incrementalBytes);
+        lastRecordedBytes = bytes;
       }
 
+      const now = Date.now();
+      const deltaTime = (now - lastProgressTime) / 1000;
       if (deltaTime >= 0.3) {
-        task.speedBytesPerSec = Math.round(deltaBytes / deltaTime);
-        lastProgressBytes = bytes;
+        const speedDelta = bytes - lastSpeedBytes;
+        task.speedBytesPerSec = Math.max(0, Math.round(speedDelta / deltaTime));
+        lastSpeedBytes = bytes;
         lastProgressTime = now;
       }
 
@@ -398,13 +400,32 @@ class DownloadManager {
             task.pathSegments,
             finalFileName,
             stream,
-            totalBytes,
-            (b, t) => handleProgress(b, t)
+            totalBytes
           );
         }
+      } else if ((window as any).electronAPI?.saveFileNative) {
+        // Desktop Electron mode: create real folders directly in OS Downloads/DriveSync
+        const { stream, finalFileName } = await downloadFileStream(
+          this.accessToken,
+          task.file,
+          (b, t) => handleProgress(b, t),
+          signal
+        );
+        if (signal.aborted || this.isPaused) return;
+        const res = new Response(stream);
+        const buffer = await res.arrayBuffer();
+        const saveRes = await (window as any).electronAPI.saveFileNative(
+          '__DOWNLOADS__',
+          task.pathSegments || [],
+          finalFileName,
+          buffer
+        );
+        if (!saveRes?.success) {
+          throw new Error(saveRes?.error || 'Falha ao gravar arquivo no disco via Electron.');
+        }
       } else {
-        // Fallback: high-speed stream to browser download
-        const { stream, totalBytes, finalFileName } = await downloadFileStream(
+        // Fallback: high-speed stream to browser download (uncompressed individual file)
+        const { stream, finalFileName } = await downloadFileStream(
           this.accessToken,
           task.file,
           (b, t) => handleProgress(b, t),

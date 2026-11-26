@@ -8,6 +8,8 @@ export const generateUserGuidePDF = () => {
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const bottomLimit = pageHeight - 20;
   let y = 20;
 
   // Header background banner
@@ -18,44 +20,50 @@ export const generateUserGuidePDF = () => {
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(22);
-  doc.text('DriveSync Turbo', 15, 20);
+  doc.text('DriveSync Turbo', 15, 19);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(11);
-  doc.text('Guia Oficial de Funcionalidades e Manual de Utilização', 15, 30);
+  doc.text('Guia Oficial de Funcionalidades, Vantagens e Atualizações', 15, 29);
 
   y = 50;
 
-  const addSection = (title: string) => {
-    if (y > 260) {
+  const ensureSpace = (neededHeight: number) => {
+    if (y + neededHeight > bottomLimit) {
       doc.addPage();
       y = 20;
     }
-    doc.setTextColor(30, 41, 59); // slate-800
+  };
+
+  const addSection = (title: string) => {
+    ensureSpace(16);
+    doc.setTextColor(15, 23, 42); // slate-900
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
+    doc.setFontSize(13);
     doc.text(title, 15, y);
-    y += 8;
+    doc.setDrawColor(203, 213, 225);
+    doc.line(15, y + 2, pageWidth - 15, y + 2);
+    y += 9;
   };
 
   const addParagraph = (text: string) => {
-    if (y > 270) {
-      doc.addPage();
-      y = 20;
-    }
     doc.setTextColor(51, 65, 85); // slate-700
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     const splitText = doc.splitTextToSize(text, pageWidth - 30);
+    const height = splitText.length * 5.2 + 4;
+    ensureSpace(height);
     doc.text(splitText, 15, y, { lineHeightFactor: 1.35 });
-    y += splitText.length * 5.5 + 5;
+    y += height;
   };
 
   const addBullet = (boldTitle: string, description: string) => {
-    if (y > 260) {
-      doc.addPage();
-      y = 20;
-    }
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    const descLines = doc.splitTextToSize(description, pageWidth - 34);
+    const neededHeight = 5.5 + descLines.length * 5.0 + 4;
+    ensureSpace(neededHeight);
+
     doc.setTextColor(30, 41, 59);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
@@ -65,34 +73,103 @@ export const generateUserGuidePDF = () => {
     doc.setTextColor(51, 65, 85);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9.5);
-    const descLines = doc.splitTextToSize(description, pageWidth - 30);
     doc.text(descLines, 19, y, { lineHeightFactor: 1.35 });
-    y += descLines.length * 5.5 + 5;
+    y += descLines.length * 5.0 + 4;
   };
 
-  // Content
+  // 1. Introdução
   addSection('1. Introdução ao DriveSync Turbo');
   addParagraph(
-    'O DriveSync Turbo é um aplicativo de alta performance projetado para sincronizar, baixar e gerenciar arquivos do Google Drive diretamente para o seu computador com velocidade máxima, suporte a múltiplos threads simultâneos e sincronização contínua em tempo real.'
+    'O DriveSync Turbo é uma ferramenta de alta performance para baixar, compactar e sincronizar arquivos e pastas do Google Drive diretamente para o seu computador, com conexões paralelas, acompanhamento visual em tempo real e preservação integral da estrutura de diretórios.'
   );
 
-  addSection('2. Principais Funcionalidades');
-  addBullet('Aceleração Turbo (2x a 16x)', 'Divide arquivos grandes em múltiplos streams paralelos via HTTP Range para saturar sua largura de banda e maximizar a taxa de download.');
-  addBullet('Sincronização em Tempo Real', 'Monitora continuamente arquivos e pastas selecionados. Qualquer alteração ou novo arquivo no Google Drive é baixado automaticamente.');
-  addBullet('Estrutura de Pastas Idêntica', 'Recria automaticamente no disco do computador exatamente a mesma árvore de pastas e subpastas originais do Google Drive.');
-  addBullet('Gravação Nativa ou Rápida', 'Permite salvar diretamente em pastas físicas do disco via File System Access ou na pasta padrão de Downloads.');
-  addBullet('Baixar em ZIP', 'Opção para compactar e baixar arquivos ou pastas selecionadas em um único arquivo .ZIP com estrutura preservada.');
-  addBullet('Botões Iniciar e Parar', 'Controle total com alternância dinâmica para iniciar, pausar ou interromper transferências a qualquer momento com um clique.');
+  // 2. Vantagens em relação ao Google Drive Web
+  addSection('2. Ganhos em Relação ao Download Direto pelo Google Drive');
+  addBullet(
+    'Gravação direta na pasta sem compactação obrigatória (Iniciar o Download)',
+    'Na interface web do Google Drive, baixar pastas ou vários arquivos força a criação de múltiplos pacotes .ZIP que exigem extração manual. No DriveSync Turbo (executado em nova aba com pasta vinculada ou no modo desktop), as pastas e os arquivos originais são gravados diretamente no disco sem compactação.'
+  );
+  addBullet(
+    'Mais velocidade com conexões paralelas e divisão Multi-Chunk',
+    'Permite configurar de 2x até 16x downloads simultâneos e dividir arquivos grandes (acima de 25 MB) em múltiplos canais paralelos via HTTP Range, oferecendo telemetria de rede ao vivo, pausa e retomada.'
+  );
+  addBullet(
+    'Backup completo com memória para continuar de onde parou (Baixar Tudo)',
+    'Ao contrário do Google Drive web - onde cancelar ou interromper o download faz perder todo o trabalho -, a função Baixar Tudo salva o progresso localmente em memória persistente para retomar exatamente de onde parou.'
+  );
+  addBullet(
+    'Proteção automática contra arquivos com nomes repetidos',
+    'O Google Drive permite vários arquivos com o mesmo nome dentro da mesma pasta. Tanto na gravação direta no disco quanto nos arquivos .ZIP, o aplicativo renomeia duplicatas automaticamente (ex.: documento (1).pdf) para evitar sobrescrita ou perda de dados.'
+  );
+  addBullet(
+    'Sincronização automática em tempo real (AutoSync)',
+    'Monitora pastas e arquivos escolhidos em intervalos configuráveis (5s a 60s) e baixa automaticamente qualquer arquivo novo ou modificado sem exigir downloads manuais repetidos.'
+  );
 
-  addSection('3. Como Utilizar o Aplicativo');
-  addBullet('Passo 1: Conectar ao Google Drive', 'Clique no botão "Conectar com Google Drive" no topo da tela e faça login com sua conta Google para autorizar o acesso de leitura.');
-  addBullet('Passo 2: Configurar a Pasta de Destino', 'Clique em "Configurar Pasta no Computador" e escolha entre usar a pasta padrão de Downloads ou selecionar um diretório físico no seu disco.');
-  addBullet('Passo 3: Iniciar o Download', 'Navegue pelas pastas do seu Google Drive, selecione os itens desejados (ou deixe tudo visível) e clique em "Iniciar o Download". Uma barra de progresso central exibirá o andamento em tempo real.');
-  addBullet('Passo 4: Sincronização Automática', 'Adicione arquivos ou pastas cruciais ao monitoramento contínuo para que o app verifique alterações automaticamente.');
+  // 3. Funcionalidades e Atualizações Implementadas
+  addSection('3. Principais Funcionalidades e Melhorias Recentes');
+  addBullet(
+    'Iniciar o Download com criação de pastas originais (Sem ZIP)',
+    'Ao utilizar "Iniciar o Download", o aplicativo cria no destino as pastas com os mesmos nomes originais do Drive e baixa os arquivos diretamente sem compactá-los em .ZIP. Em navegadores dentro de iframe com restrição de acesso ao disco, o sistema orienta abrir em nova aba para habilitar a gravação nativa de pastas.'
+  );
+  addBullet(
+    'Indicador circular giratório e tela de acompanhamento',
+    'Durante os downloads em andamento, um indicador circular giratório central exibe o percentual concluído, velocidade instantânea, arquivo atual, volume transferido e botão imediato de parada.'
+  );
+  addBullet(
+    'Tela final de estatísticas e link para a pasta destino',
+    'Ao concluir o download ou geração do .ZIP, é exibido um resumo completo com quantidade de arquivos, pastas processadas, erros (se houver), volume total, tempo decorrido, velocidade média/pico e acesso direto para inspecionar ou abrir a pasta de destino.'
+  );
+  addBullet(
+    'Função "Baixar Tudo" com permissão, acompanhamento e memória persistente',
+    'Solicita autorização antes de compactar todo o Google Drive em .ZIP e abre uma tela de acompanhamento em tempo real com botão "Cancelar" imediato. Após um cancelamento, o progresso fica salvo na memória; ao acionar "Baixar Tudo" novamente, o app pede autorização para continuar de onde parou ou, se negada, limpa a memória e recomeça tudo do zero.'
+  );
+  addBullet(
+    'Função "Baixar ZIP" com janela de progresso e hierarquia fiel do Drive',
+    'Ao selecionar arquivos ou subpastas e clicar em "Baixar ZIP", abre uma janela de acompanhamento com barra de progresso, contadores ao vivo e botão "Cancelar". O arquivo .ZIP gerado mantém exatamente a mesma sequência de pastas desde a raiz do Drive até o item selecionado, incluindo subpastas vazias e preservação de nomes iguais.'
+  );
 
-  addSection('4. Versão Desktop Windows (.exe)');
+  // 4. Passo a Passo
+  addSection('4. Como Utilizar o Aplicativo');
+  addBullet(
+    'Passo 1: Conectar ao Google Drive',
+    'Clique em "Conectar com Google Drive" no topo da tela e autorize o acesso de leitura da sua conta Google.'
+  );
+  addBullet(
+    'Passo 2: Configurar a Pasta de Destino',
+    'Escolha uma pasta física no seu computador (em nova aba ou aplicativo desktop) para gravar pastas e arquivos diretamente no disco, ou utilize a pasta padrão de Downloads.'
+  );
+  addBullet(
+    'Passo 3: Escolher o Modo de Download',
+    'Use "Iniciar o Download" para baixar arquivos e pastas originais sem compactação, "Baixar ZIP" para compactar os itens selecionados mantendo a árvore de pastas, ou "Baixar Tudo" para gerar um .ZIP completo de todo o Meu Drive com suporte a pausa e retomada.'
+  );
+  addBullet(
+    'Passo 4: Acompanhamento e Sincronização Contínua',
+    'Acompanhe o progresso na tela central (com opção de cancelar a qualquer momento) e, se desejar, adicione pastas ou arquivos ao painel de Sincronização em Tempo Real.'
+  );
+
+  // 5. Motor de Aceleração Turbo
+  addSection('5. Como Utilizar o Motor de Aceleração Turbo');
   addParagraph(
-    'O aplicativo está configurado para empacotamento desktop via Electron. Para gerar um arquivo executável nativo .exe no Windows, utilize os comandos de build do projeto (npm run electron:build).'
+    'Localizado logo abaixo da configuração da pasta de destino, o Motor de Aceleração Turbo controla o paralelismo e a velocidade dos downloads realizados por "Iniciar o Download":'
+  );
+  addBullet(
+    '1. Escolha o nível de paralelismo (2x Leve, 4x Rápido, 8x Turbo, 16x Extremo)',
+    'Define quantos arquivos são baixados ao mesmo tempo (o padrão inicial é 6 conexões, ajustável antes ou durante o download). Use 2x ou 4x em conexões instáveis, e 8x ou 16x em internet rápida com muitos arquivos.'
+  );
+  addBullet(
+    '2. Ative ou desative o Multi-Chunk (ON / OFF)',
+    'Com Multi-Chunk ON (ativo por padrão), arquivos grandes acima de 25 MB são divididos automaticamente em múltiplos blocos paralelos para aproveitar melhor a largura de banda. Clique no botão para alternar para OFF se preferir fluxo único.'
+  );
+  addBullet(
+    '3. Inicie, pare ou continue o download',
+    'Selecione os arquivos ou pastas desejados (ou deixe sem seleção para baixar toda a pasta aberta) e clique em "Iniciar o Download". O painel exibe taxa em tempo real, velocidade de pico, volume transferido e conexões ativas. Ao clicar em "Parar o Download", a fila é pausada imediatamente e o botão muda para "Continuar o Download".'
+  );
+
+  // 6. Desktop
+  addSection('6. Versão Desktop Windows (.exe)');
+  addParagraph(
+    'O projeto possui suporte ao empacotamento desktop via Electron com criação nativa de pastas e abertura direta da pasta de destino no sistema operacional.'
   );
 
   // Footer
@@ -107,3 +184,4 @@ export const generateUserGuidePDF = () => {
 
   doc.save('DriveSync_Turbo_Guia_do_Usuario.pdf');
 };
+

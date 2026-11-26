@@ -44,7 +44,21 @@ export const GOOGLE_WORKSPACE_EXPORTS: Record<string, { mimeType: string; extens
     mimeType: 'image/png',
     extension: '.png',
   },
+  'application/vnd.google-apps.script': {
+    mimeType: 'application/vnd.google-apps.script+json',
+    extension: '.json',
+  },
 };
+
+export const NON_EXPORTABLE_WORKSPACE_TYPES = new Set<string>([
+  'application/vnd.google-apps.folder',
+  'application/vnd.google-apps.form',
+  'application/vnd.google-apps.site',
+  'application/vnd.google-apps.map',
+  'application/vnd.google-apps.shortcut',
+  'application/vnd.google-apps.fusiontable',
+  'application/vnd.google-apps.drive-sdk',
+]);
 
 export const isGoogleWorkspaceDoc = (mimeType: string): boolean => {
   return mimeType.startsWith('application/vnd.google-apps.') && mimeType !== 'application/vnd.google-apps.folder';
@@ -58,12 +72,17 @@ export const listDriveFiles = async (
   folderId: string = 'root',
   queryFilter: string = '',
   pageToken?: string,
-  pageSize: number = 200
+  pageSize: number = 200,
+  signal?: AbortSignal
 ): Promise<DriveListResponse> => {
   let allFiles: DriveFile[] = [];
   let currentToken: string | undefined = pageToken;
 
   do {
+    if (signal?.aborted) {
+      throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+    }
+
     let q = `'${folderId}' in parents and trashed = false`;
     if (queryFilter.trim()) {
       q += ` and name contains '${queryFilter.replace(/'/g, "\\'")}'`;
@@ -75,6 +94,8 @@ export const listDriveFiles = async (
     url.searchParams.set('pageSize', pageSize.toString());
     url.searchParams.set('fields', fields);
     url.searchParams.set('orderBy', 'folder,name');
+    url.searchParams.set('supportsAllDrives', 'true');
+    url.searchParams.set('includeItemsFromAllDrives', 'true');
     if (currentToken) {
       url.searchParams.set('pageToken', currentToken);
     }
@@ -83,11 +104,14 @@ export const listDriveFiles = async (
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      signal,
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData?.error?.message || `Erro ao carregar arquivos do Drive (${response.status})`);
+      const err: any = new Error(errorData?.error?.message || `Erro ao carregar arquivos do Drive (${response.status})`);
+      err.status = response.status;
+      throw err;
     }
 
     const data = await response.json();
@@ -127,7 +151,7 @@ export const getDriveFileMeta = async (
   fileId: string
 ): Promise<DriveFile> => {
   const fields = 'id, name, mimeType, size, modifiedTime, md5Checksum, iconLink, thumbnailLink, parents';
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=${fields}`;
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(fields)}&supportsAllDrives=true`;
 
   const response = await fetch(url, {
     headers: {
@@ -136,7 +160,9 @@ export const getDriveFileMeta = async (
   });
 
   if (!response.ok) {
-    throw new Error(`Erro ao obter metadados do arquivo (${response.status})`);
+    const err: any = new Error(`Erro ao obter metadados do arquivo (${response.status})`);
+    err.status = response.status;
+    throw err;
   }
 
   const f = await response.json();
@@ -167,19 +193,38 @@ export interface FileWithPath {
 export const listAllFilesRecursively = async (
   accessToken: string,
   folderId: string,
-  currentPath: string[] = []
+  currentPath: string[] = [],
+  visitedFolderIds: Set<string> = new Set(),
+  onFolderVisited?: (pathSegments: string[]) => void,
+  signal?: AbortSignal
 ): Promise<FileWithPath[]> => {
+  if (signal?.aborted) {
+    throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+  }
+  if (visitedFolderIds.has(folderId)) return [];
+  visitedFolderIds.add(folderId);
+
+  if (currentPath.length > 0 && onFolderVisited) {
+    onFolderVisited(currentPath);
+  }
+
   const result: FileWithPath[] = [];
-  const resp = await listDriveFiles(accessToken, folderId, '', undefined, 1000);
+  const resp = await listDriveFiles(accessToken, folderId, '', undefined, 1000, signal);
   for (const item of resp.files) {
+    if (signal?.aborted) {
+      throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+    }
     if (item.isFolder) {
       const subFiles = await listAllFilesRecursively(
         accessToken,
         item.id,
-        [...currentPath, item.name]
+        [...currentPath, item.name],
+        visitedFolderIds,
+        onFolderVisited,
+        signal
       );
       result.push(...subFiles);
-    } else {
+    } else if (!NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
       result.push({
         file: item,
         pathSegments: currentPath,
@@ -207,16 +252,19 @@ export const downloadFileStream = async (
   let finalFileName = file.name;
 
   if (isGoogleWorkspaceDoc(file.mimeType)) {
+    if (NON_EXPORTABLE_WORKSPACE_TYPES.has(file.mimeType)) {
+      throw new Error(`O tipo "${file.mimeType.replace('application/vnd.google-apps.', '')}" não suporta download/exportação direta pelo Drive.`);
+    }
     const exportConfig = file.exportFormat || GOOGLE_WORKSPACE_EXPORTS[file.mimeType] || {
       mimeType: 'application/pdf',
       extension: '.pdf',
     };
-    downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=${encodeURIComponent(exportConfig.mimeType)}`;
+    downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}/export?mimeType=${encodeURIComponent(exportConfig.mimeType)}`;
     if (!finalFileName.endsWith(exportConfig.extension)) {
       finalFileName += exportConfig.extension;
     }
   } else {
-    downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+    downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`;
   }
 
   const response = await fetch(downloadUrl, {
@@ -227,7 +275,9 @@ export const downloadFileStream = async (
   });
 
   if (!response.ok) {
-    throw new Error(`Falha no download (${response.status}: ${response.statusText})`);
+    const err: any = new Error(`Falha no download (${response.status}: ${response.statusText})`);
+    err.status = response.status;
+    throw err;
   }
 
   if (!response.body) {
@@ -319,7 +369,7 @@ export const downloadLargeFileMultiChunk = async (
   const chunkProgress = new Array(numChunks).fill(0);
 
   const downloadPromises = chunkRanges.map(async (range, index) => {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Range: `bytes=${range.start}-${range.end}`,
@@ -327,8 +377,8 @@ export const downloadLargeFileMultiChunk = async (
       signal,
     });
 
-    if (!res.ok && res.status !== 206) {
-      throw new Error(`Falha no chunk range ${range.start}-${range.end}: status ${res.status}`);
+    if (res.status !== 206) {
+      throw new Error(`RANGE_NOT_SUPPORTED:${res.status}`);
     }
 
     if (!res.body) {
@@ -354,11 +404,28 @@ export const downloadLargeFileMultiChunk = async (
     return new Blob(parts as BlobPart[]);
   });
 
-  const downloadedBlobs = await Promise.all(downloadPromises);
-  const finalBlob = new Blob(downloadedBlobs, { type: file.mimeType });
+  try {
+    const downloadedBlobs = await Promise.all(downloadPromises);
+    const finalBlob = new Blob(downloadedBlobs, { type: file.mimeType });
 
-  return {
-    blob: finalBlob,
-    finalFileName: file.name,
-  };
+    return {
+      blob: finalBlob,
+      finalFileName: file.name,
+    };
+  } catch (err: any) {
+    if (err?.message?.startsWith('RANGE_NOT_SUPPORTED:')) {
+      const { stream, finalFileName } = await downloadFileStream(
+        accessToken,
+        file,
+        (b, t) => {
+          if (onProgress) onProgress(b, t || totalBytes);
+        },
+        signal
+      );
+      const response = new Response(stream);
+      const blob = await response.blob();
+      return { blob, finalFileName };
+    }
+    throw err;
+  }
 };

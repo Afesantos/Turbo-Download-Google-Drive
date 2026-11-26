@@ -132,7 +132,7 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
           <div className="w-full bg-slate-950 h-3 rounded-full overflow-hidden p-0.5 border border-slate-800">
             <div
               className="h-full rounded-full bg-gradient-to-r from-blue-500 via-amber-500 to-rose-500 transition-all duration-300 shadow-sm shadow-orange-500/50"
-              style={{ width: `${Math.max(5, gaugePercent)}%` }}
+              style={{ width: `${currentSpeed > 0 ? Math.max(5, gaugePercent) : 0}%` }}
             />
           </div>
 

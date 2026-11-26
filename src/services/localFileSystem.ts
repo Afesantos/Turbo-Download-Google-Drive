@@ -86,6 +86,24 @@ export const clearStoredDirectoryHandle = async (): Promise<void> => {
   }
 };
 
+// Check permission without triggering a user-gesture prompt
+export const checkStoredPermission = async (
+  fileHandle: any,
+  readWrite: boolean = true
+): Promise<'granted' | 'prompt' | 'denied'> => {
+  const options = {
+    mode: readWrite ? 'readwrite' : 'read',
+  };
+  try {
+    if (typeof fileHandle.queryPermission === 'function') {
+      return await fileHandle.queryPermission(options);
+    }
+  } catch {
+    // ignore
+  }
+  return 'denied';
+};
+
 // Verify or ask for readwrite permission
 export const verifyPermission = async (
   fileHandle: any,
@@ -191,10 +209,11 @@ const getUniqueFileHandle = async (
   dirHandle: FileSystemDirectoryHandle,
   originalName: string
 ): Promise<FileSystemFileHandle> => {
-  let name = originalName;
-  const lastDotIndex = originalName.lastIndexOf('.');
-  const baseName = lastDotIndex !== -1 ? originalName.substring(0, lastDotIndex) : originalName;
-  const ext = lastDotIndex !== -1 ? originalName.substring(lastDotIndex) : '';
+  const sanitized = originalName.trim().replace(/[<>:"/\\|?*]/g, '_') || 'arquivo';
+  let name = sanitized === '.' || sanitized === '..' ? 'arquivo' : sanitized;
+  const lastDotIndex = name.lastIndexOf('.');
+  const baseName = lastDotIndex > 0 ? name.substring(0, lastDotIndex) : name;
+  const ext = lastDotIndex > 0 ? name.substring(lastDotIndex) : '';
 
   let counter = 1;
   while (true) {

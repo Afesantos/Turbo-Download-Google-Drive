@@ -76,8 +76,12 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
                 <span className="font-bold text-white truncate max-w-xs sm:max-w-md">
                   {localFolderName}
                 </span>
-                <span className="text-xs text-emerald-400 font-sans font-medium">
-                  {isNativeDisk ? '• Acesso nativo ao disco' : '• Salvo na pasta Downloads do PC'}
+                <span className={`text-xs font-sans font-medium ${isNativeDisk ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {isNativeDisk
+                    ? '• Cria pastas originais direto no disco'
+                    : inIframe
+                    ? '• Modo navegador (abra em nova aba para criar pastas no disco)'
+                    : '• Salvo na pasta Downloads (selecione pasta física para criar subpastas)'}
                 </span>
               </div>
             ) : (
@@ -87,14 +91,14 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
               </p>
             )}
 
-            {inIframe && (
-              <div className="mt-2 flex items-center space-x-2 text-[11px] text-slate-400">
-                <span>Dica: Para selecionar qualquer pasta física específica do disco,</span>
+            {inIframe && !isNativeDisk && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-amber-300/90">
+                <span>Para criar pastas reais com o mesmo nome original no disco (sem ZIP),</span>
                 <a
                   href={appUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 underline font-semibold flex items-center space-x-1"
+                  className="text-blue-400 hover:text-blue-300 underline font-semibold inline-flex items-center space-x-1"
                 >
                   <span>abra o app em nova aba</span>
                   <ExternalLink className="w-3 h-3" />

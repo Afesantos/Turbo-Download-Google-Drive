@@ -85,12 +85,13 @@ export const FolderModal: React.FC<FolderModalProps> = ({
           <div className="mb-4 bg-amber-950/60 border border-amber-800/80 rounded-2xl p-4 text-xs text-amber-200 space-y-2">
             <div className="flex items-center space-x-2 font-bold text-amber-300">
               <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Restrição de Segurança do Navegador em iframes</span>
+              <span>Para Criar Pastas com o Nome Original no Disco</span>
             </div>
             <p className="text-amber-200/90 leading-relaxed">
-              O navegador bloqueia o seletor nativo de pastas quando executado dentro de painéis
-              embutidos (iframe). Você pode usar o <strong>Modo Rápido de Downloads</strong> abaixo
-              ou abrir o app em uma <strong>aba separada</strong> para acesso total ao disco.
+              O navegador bloqueia a criação direta de pastas no disco quando o app roda dentro de um
+              painel embutido (iframe). Para criar as pastas reais com o mesmo nome original sem
+              compactar em ZIP, <strong>abra o app em uma aba separada</strong>. Caso prefira, você
+              pode usar o modo Downloads abaixo (baixa os arquivos soltos).
             </p>
             {appUrl && (
               <a
@@ -99,7 +100,7 @@ export const FolderModal: React.FC<FolderModalProps> = ({
                 rel="noopener noreferrer"
                 className="inline-flex items-center space-x-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded-xl shadow-md transition-all mt-1"
               >
-                <span>Abrir App em Nova Aba</span>
+                <span>Abrir App em Nova Aba (Criar Pastas Reais)</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             )}

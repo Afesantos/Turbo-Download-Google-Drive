@@ -115,6 +115,29 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
           </div>
         </div>
 
+        {/* Prominent Centered Spinning Circle */}
+        <div className="flex flex-col items-center justify-center my-4">
+          <div className="relative w-24 h-24 flex items-center justify-center">
+            {/* Outer ambient glow */}
+            <div className="absolute inset-0 rounded-full bg-orange-500/15 blur-md" />
+            {/* Base track circle */}
+            <div className="absolute inset-0 rounded-full border-4 border-slate-800" />
+            {/* Primary spinning circle */}
+            <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-orange-500 border-r-amber-400 animate-spin" />
+            {/* Inner counter-glow ring */}
+            <div className="absolute inset-2 rounded-full border-2 border-transparent border-b-emerald-400/80 animate-spin [animation-duration:1.5s] [animation-direction:reverse]" />
+            {/* Center percentage */}
+            <div className="relative flex flex-col items-center justify-center">
+              <span className="text-xl font-extrabold font-mono text-white leading-none">
+                {overallPercent}%
+              </span>
+              <span className="text-[9px] uppercase tracking-wider font-bold text-orange-400 mt-1">
+                Baixando
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Big Central Progress Bar */}
         <div className="space-y-2 mb-6">
           <div className="flex items-center justify-between text-xs font-semibold">
@@ -122,7 +145,7 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
               <span>Progresso de Sincronização & Download</span>
             </span>
-            <span className="text-2xl font-extrabold font-mono text-white">
+            <span className="text-sm font-bold font-mono text-emerald-400">
               {overallPercent}%
             </span>
           </div>
@@ -139,7 +162,9 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
 
           <div className="flex items-center justify-between text-xs text-slate-400 font-mono pt-1">
             <span>
-              {formatBytes(totalBytesDownloaded)} de {formatBytes(totalBytesExpected)}
+              {totalBytesExpected > 0
+                ? `${formatBytes(totalBytesDownloaded)} de ${formatBytes(totalBytesExpected)}`
+                : `${formatBytes(totalBytesDownloaded)} baixados`}
             </span>
             <span>
               {completedTasks.length} de {relevantTasks.length} arquivos processados

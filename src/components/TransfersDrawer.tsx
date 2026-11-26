@@ -35,10 +35,12 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
 
   const activeTasks = tasks.filter((t) => t.status === 'downloading');
   const queuedTasks = tasks.filter((t) => t.status === 'queued');
+  const pausedTasks = tasks.filter((t) => t.status === 'paused');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const errorTasks = tasks.filter((t) => t.status === 'error');
 
   const hasActivity = activeTasks.length > 0 || queuedTasks.length > 0;
+  const hasPaused = !hasActivity && pausedTasks.length > 0;
 
   if (tasks.length === 0) {
     return null;
@@ -70,7 +72,11 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-xs font-bold text-white">
-                  {hasActivity ? 'Transferências em Andamento' : 'Downloads Concluídos'}
+                  {hasActivity
+                    ? 'Transferências em Andamento'
+                    : hasPaused
+                    ? 'Downloads Pausados'
+                    : 'Downloads Concluídos'}
                 </span>
                 {hasActivity && (
                   <span className="text-[10px] font-mono font-bold text-emerald-400">
@@ -82,7 +88,9 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
               <div className="text-[10px] text-slate-400">
                 {activeTasks.length > 0 && `${activeTasks.length} baixando`}
                 {queuedTasks.length > 0 && ` • ${queuedTasks.length} na fila`}
+                {pausedTasks.length > 0 && ` • ${pausedTasks.length} pausado(s)`}
                 {completedTasks.length > 0 && ` • ${completedTasks.length} salvos`}
+                {errorTasks.length > 0 && ` • ${errorTasks.length} erro(s)`}
               </div>
             </div>
           </div>
@@ -101,14 +109,14 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
               </button>
             )}
 
-            {!hasActivity && queuedTasks.length > 0 && onStartDownload && (
+            {!hasActivity && (queuedTasks.length > 0 || pausedTasks.length > 0) && onStartDownload && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onStartDownload();
                 }}
                 className="p-1.5 rounded-lg bg-emerald-600/30 hover:bg-emerald-600 text-emerald-300 hover:text-white transition-colors"
-                title="Iniciar Download"
+                title="Continuar Download"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
               </button>
@@ -129,15 +137,15 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
         {/* Expanded Panel */}
         {isExpanded && (
           <div className="p-3 max-h-80 overflow-y-auto space-y-2.5">
-            {/* Clear completed button */}
-            {completedTasks.length > 0 && (
+            {/* Clear completed/errored button */}
+            {(completedTasks.length > 0 || errorTasks.length > 0) && (
               <div className="flex justify-end pb-1 border-b border-slate-800">
                 <button
                   onClick={onClearCompleted}
                   className="flex items-center space-x-1 text-[11px] text-slate-400 hover:text-rose-400 font-medium"
                 >
                   <Trash2 className="w-3 h-3" />
-                  <span>Limpar Concluídos ({completedTasks.length})</span>
+                  <span>Limpar Histórico ({completedTasks.length + errorTasks.length})</span>
                 </button>
               </div>
             )}
@@ -169,6 +177,9 @@ export const TransfersDrawer: React.FC<TransfersDrawerProps> = ({
                         </span>
                       )}
                       {isError && <span className="text-rose-400 font-semibold">Erro</span>}
+                      {task.status === 'paused' && (
+                        <span className="text-amber-400 font-semibold">Pausado</span>
+                      )}
                       {task.status === 'queued' && (
                         <span className="text-slate-500">Aguardando...</span>
                       )}

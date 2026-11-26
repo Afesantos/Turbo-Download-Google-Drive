@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User } from 'firebase/auth';
 import {
   initAuth,
@@ -21,10 +21,13 @@ import {
   pickLocalDirectory,
   getStoredDirectoryHandle,
   clearStoredDirectoryHandle,
+  checkStoredPermission,
   verifyPermission,
+  getOrCreateSubdirectory,
   saveFallbackFolderName,
   getFallbackFolderName,
   clearFallbackFolder,
+  isFileSystemAccessSupported,
   isInsideIframe,
 } from './services/localFileSystem';
 import {
@@ -38,9 +41,16 @@ import {
   SyncEngineState,
   SyncLogEntry,
 } from './services/syncEngine';
-import { exportSelectedFilesToZip } from './services/zipExport';
+import { exportSelectedFilesToZip, exportAllDriveToZip, ZipAllProgress } from './services/zipExport';
+import {
+  clearZipAllCheckpoint,
+  getZipAllCheckpointSummary,
+  ZipAllCheckpointSummary,
+} from './services/zipCheckpoint';
 import { generateUserGuidePDF } from './services/pdfGenerator';
 import { ExecutionActivityModal } from './components/ExecutionActivityModal';
+import { DownloadAllZipModal } from './components/DownloadAllZipModal';
+import { ZipProgressModal } from './components/ZipProgressModal';
 
 import { Header } from './components/Header';
 import { FolderSelectorCard } from './components/FolderSelectorCard';
@@ -127,18 +137,65 @@ export default function App() {
 
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState<boolean>(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState<boolean>(false);
-  const [downloadStartTime, setDownloadStartTime] = useState<number | null>(null);
+  const [isDownloadAllModalOpen, setIsDownloadAllModalOpen] = useState<boolean>(false);
+  const [isDownloadingAllZip, setIsDownloadingAllZip] = useState<boolean>(false);
+  const [isCancellingDownloadAll, setIsCancellingDownloadAll] = useState<boolean>(false);
+  const [savedZipCheckpoint, setSavedZipCheckpoint] = useState<ZipAllCheckpointSummary | null>(null);
+  const [downloadAllProgress, setDownloadAllProgress] = useState<ZipAllProgress>({
+    phase: 'scanning',
+    percent: 0,
+    currentItem: '',
+    processedFiles: 0,
+    totalFiles: 0,
+    folderCount: 0,
+    downloadedBytes: 0,
+    totalBytesExpected: 0,
+  });
+  const downloadAllAbortRef = useRef<AbortController | null>(null);
+  const [isZipModalOpen, setIsZipModalOpen] = useState<boolean>(false);
+  const [isCancellingZip, setIsCancellingZip] = useState<boolean>(false);
+  const [zipSelectedCount, setZipSelectedCount] = useState<number>(0);
+  const [zipProgress, setZipProgress] = useState<ZipAllProgress>({
+    phase: 'scanning',
+    percent: 0,
+    currentItem: '',
+    processedFiles: 0,
+    totalFiles: 0,
+    folderCount: 0,
+    downloadedBytes: 0,
+    totalBytesExpected: 0,
+  });
+  const zipAbortRef = useRef<AbortController | null>(null);
+  const downloadStartTimeRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasExplicitDownloadsChoiceRef = useRef<boolean>(false);
   const [downloadStats, setDownloadStats] = useState<{
     count: number;
+    errorCount: number;
     folderCount: number;
     bytes: number;
     elapsedSeconds: number;
-  }>({ count: 0, folderCount: 0, bytes: 0, elapsedSeconds: 0 });
+    averageSpeedBytes: number;
+    peakSpeedBytes: number;
+    isZip?: boolean;
+  }>({
+    count: 0,
+    errorCount: 0,
+    folderCount: 0,
+    bytes: 0,
+    elapsedSeconds: 0,
+    averageSpeedBytes: 0,
+    peakSpeedBytes: 0,
+    isZip: false,
+  });
 
-  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
+  const showToast = useCallback((message: string, type: 'success' | 'info' | 'error' = 'info') => {
     setFeedbackToast({ type, message });
-    setTimeout(() => setFeedbackToast(null), 4000);
-  };
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => setFeedbackToast(null), 4000);
+  }, []);
 
   // 1. Initialize Auth and restore stored folder handle
   useEffect(() => {
@@ -165,8 +222,8 @@ export default function App() {
     getStoredDirectoryHandle().then(async (handle) => {
       if (handle) {
         try {
-          const hasPerm = await verifyPermission(handle, false);
-          if (hasPerm) {
+          const permState = await checkStoredPermission(handle, true);
+          if (permState !== 'denied') {
             setLocalDirHandle(handle);
             setLocalFolderName(handle.name);
             setIsNativeDisk(true);
@@ -192,28 +249,61 @@ export default function App() {
 
     // Subscribe to DownloadManager updates
     let previousActiveCount = 0;
+    let previousCompletedCount = 0;
+    let previousErrorCount = 0;
+    let previousTotalBytes = 0;
     const unsubscribeDownloads = downloadManager.subscribe((updatedTasks, updatedTelemetry) => {
       setTasks([...updatedTasks]);
       setTelemetry({ ...updatedTelemetry });
 
-      if (previousActiveCount > 0 && updatedTelemetry.activeCount === 0 && updatedTelemetry.completedCount > 0) {
-        const elapsed = downloadStartTime ? Math.floor((Date.now() - downloadStartTime) / 1000) : 0;
+      const allQueueFinished =
+        previousActiveCount > 0 &&
+        updatedTelemetry.activeCount === 0 &&
+        updatedTelemetry.queuedCount === 0 &&
+        !updatedTelemetry.isPaused &&
+        (updatedTelemetry.completedCount > previousCompletedCount ||
+          updatedTelemetry.errorCount > previousErrorCount);
+
+      if (allQueueFinished) {
+        const startTs = downloadStartTimeRef.current;
+        const elapsed = startTs ? Math.max(0, Math.round((Date.now() - startTs) / 1000)) : 0;
+        const batchCount = Math.max(0, updatedTelemetry.completedCount - previousCompletedCount);
+        const batchErrors = Math.max(0, updatedTelemetry.errorCount - previousErrorCount);
+        const batchBytes = Math.max(0, updatedTelemetry.totalDownloadedBytes - previousTotalBytes);
+        const avgSpeed = batchBytes > 0 ? Math.round(batchBytes / Math.max(1, elapsed)) : 0;
+
         const uniqueFolders = new Set<string>();
-        updatedTasks.forEach((t) => {
-          if (t.pathSegments && t.pathSegments.length > 0) {
-            uniqueFolders.add(t.pathSegments.join('/'));
-          }
-        });
+        updatedTasks
+          .filter((t) => t.status === 'completed')
+          .slice(0, batchCount || 1)
+          .forEach((t) => {
+            if (t.pathSegments && t.pathSegments.length > 0) {
+              uniqueFolders.add(t.pathSegments.join('/'));
+            }
+          });
 
         setDownloadStats({
-          count: updatedTelemetry.completedCount,
+          count: batchCount,
+          errorCount: batchErrors,
           folderCount: Math.max(1, uniqueFolders.size),
-          bytes: updatedTelemetry.totalDownloadedBytes,
+          bytes: batchBytes,
           elapsedSeconds: elapsed,
+          averageSpeedBytes: avgSpeed,
+          peakSpeedBytes: updatedTelemetry.peakSpeedBytes,
+          isZip: false,
         });
-        setDownloadStartTime(null);
+        downloadStartTimeRef.current = null;
+        previousCompletedCount = updatedTelemetry.completedCount;
+        previousErrorCount = updatedTelemetry.errorCount;
+        previousTotalBytes = updatedTelemetry.totalDownloadedBytes;
         setIsSuccessModalOpen(true);
+      } else if (updatedTelemetry.completedCount < previousCompletedCount) {
+        // History was cleared
+        previousCompletedCount = updatedTelemetry.completedCount;
+        previousErrorCount = updatedTelemetry.errorCount;
+        previousTotalBytes = updatedTelemetry.totalDownloadedBytes;
       }
+
       previousActiveCount = updatedTelemetry.activeCount;
     });
 
@@ -226,6 +316,9 @@ export default function App() {
       unsubscribeAuth();
       unsubscribeDownloads();
       unsubscribeSync();
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
     };
   }, []);
 
@@ -240,12 +333,22 @@ export default function App() {
         setSelectedFileIds(new Set());
       } catch (err: any) {
         console.error('Erro ao listar arquivos:', err);
-        showToast(err?.message || 'Erro ao carregar arquivos do Drive.', 'error');
+        if (err?.status === 401) {
+          setToken(null);
+          setUser(null);
+          setCachedAccessToken(null);
+          downloadManager.setAccessToken(null);
+          syncEngine.setAccessToken(null);
+          setNeedsAuth(true);
+          showToast('Sessão do Google Drive expirada. Conecte novamente.', 'error');
+        } else {
+          showToast(err?.message || 'Erro ao carregar arquivos do Drive.', 'error');
+        }
       } finally {
         setIsLoadingFiles(false);
       }
     },
-    [token]
+    [token, showToast]
   );
 
   useEffect(() => {
@@ -269,7 +372,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Falha no login:', err);
-      showToast('Falha ao conectar conta Google. Verifique os popups.', 'error');
+      const msg =
+        err?.code === 'auth/popup-blocked'
+          ? 'Popup bloqueado pelo navegador. Permita popups ou abra o app em nova aba.'
+          : 'Falha ao conectar conta Google. Verifique os popups e tente novamente.';
+      showToast(msg, 'error');
     } finally {
       setIsLoggingIn(false);
     }
@@ -307,6 +414,7 @@ export default function App() {
   };
 
   const handleSelectDownloadsFolder = (subfolder: string) => {
+    hasExplicitDownloadsChoiceRef.current = true;
     saveFallbackFolderName(subfolder);
     clearStoredDirectoryHandle();
     setLocalDirHandle(null);
@@ -321,6 +429,7 @@ export default function App() {
   };
 
   const handleClearLocalFolder = async () => {
+    hasExplicitDownloadsChoiceRef.current = false;
     await clearStoredDirectoryHandle();
     clearFallbackFolder();
     setLocalDirHandle(null);
@@ -328,6 +437,58 @@ export default function App() {
     setIsNativeDisk(false);
     downloadManager.setTargetDirectory(null);
     showToast('Pasta local desvinculada.', 'info');
+  };
+
+  // Ensure local directory handle has active readwrite permission while user gesture is active
+  const prepareDestinationDirectory = async (
+    needsFolders: boolean
+  ): Promise<{ handle: FileSystemDirectoryHandle | null; aborted: boolean }> => {
+    if (localDirHandle) {
+      const granted = await verifyPermission(localDirHandle, true);
+      if (granted) {
+        downloadManager.setTargetDirectory(localDirHandle);
+        return { handle: localDirHandle, aborted: false };
+      }
+      downloadManager.setTargetDirectory(null);
+      showToast('Permissão de gravação na pasta foi negada. Selecione a pasta novamente.', 'error');
+      setIsFolderModalOpen(true);
+      return { handle: null, aborted: true };
+    }
+
+    if ((window as any).electronAPI?.saveFileNative) {
+      return { handle: null, aborted: false };
+    }
+
+    // Outside iframe, prompt native folder picker when downloading folders so real directories are created on disk
+    if (needsFolders && !isInsideIframe() && isFileSystemAccessSupported() && !hasExplicitDownloadsChoiceRef.current) {
+      try {
+        const handle = await pickLocalDirectory();
+        if (handle) {
+          setLocalDirHandle(handle);
+          setLocalFolderName(handle.name);
+          setIsNativeDisk(true);
+          downloadManager.setTargetDirectory(handle);
+          showToast(`Pasta "${handle.name}" vinculada — criando pastas originais diretamente no disco!`, 'success');
+          return { handle, aborted: false };
+        }
+        showToast('Selecione uma pasta no seu computador para criar as pastas originais no disco.', 'info');
+        return { handle: null, aborted: true };
+      } catch {
+        // Fallback below if restricted
+      }
+    }
+
+    // Inside iframe without native handle and without explicit fallback confirmation, guide user instead of silently dropping folders
+    if (needsFolders && isInsideIframe() && !hasExplicitDownloadsChoiceRef.current) {
+      setIsFolderModalOpen(true);
+      showToast('Abra o app em nova aba para criar pastas reais no disco, ou confirme o modo Downloads.', 'info');
+      return { handle: null, aborted: true };
+    }
+
+    if (!localDirHandle && !localFolderName) {
+      handleQuickSetDownloads();
+    }
+    return { handle: null, aborted: false };
   };
 
   // Navigation
@@ -355,8 +516,9 @@ export default function App() {
     });
   };
 
-  const handleSelectAll = () => {
-    setSelectedFileIds(new Set(files.map((f) => f.id)));
+  const handleSelectAll = (ids?: string[]) => {
+    const targetIds = ids && ids.length > 0 ? ids : files.map((f) => f.id);
+    setSelectedFileIds(new Set(targetIds));
   };
 
   const handleClearSelection = () => {
@@ -377,6 +539,12 @@ export default function App() {
 
     // 1. If currently paused with pending tasks, resume them
     if (downloadManager.getIsPaused() && downloadManager.getPendingCount() > 0) {
+      if (localDirHandle) {
+        await verifyPermission(localDirHandle, true);
+      }
+      if (!downloadStartTimeRef.current) {
+        downloadStartTimeRef.current = Date.now();
+      }
       downloadManager.resume();
       showToast('Downloads retomados!', 'success');
       return;
@@ -390,33 +558,62 @@ export default function App() {
 
     // 3. If no files selected, download all files and folders currently displayed
     if (files.length > 0) {
-      if (!localDirHandle && !localFolderName) {
-        handleQuickSetDownloads();
-      }
       const currentFolderSegments = getCurrentFolderPath();
-      const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+      const hasFoldersToCreate = currentFolderSegments.length > 0 || files.some((f) => f.isFolder);
+      const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
+      if (aborted) return;
 
-      for (const item of files) {
-        if (item.isFolder) {
-          const recursive = await listAllFilesRecursively(token, item.id, [
-            ...currentFolderSegments,
-            item.name,
-          ]);
-          filesToEnqueue.push(...recursive);
-        } else {
-          filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+      try {
+        const visitedFolders: string[][] = [];
+        const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+
+        if (currentFolderSegments.length > 0) {
+          visitedFolders.push(currentFolderSegments);
         }
-      }
 
-      if (filesToEnqueue.length > 0) {
-        setDownloadStartTime(Date.now());
-        downloadManager.enqueueFiles(filesToEnqueue);
-        showToast(
-          `Iniciando download de ${filesToEnqueue.length} arquivo(s) com criação das mesmas pastas!`,
-          'success'
-        );
-      } else {
-        showToast('Nenhum arquivo disponível para download.', 'info');
+        for (const item of files) {
+          if (item.isFolder) {
+            const recursive = await listAllFilesRecursively(
+              token,
+              item.id,
+              [...currentFolderSegments, item.name],
+              new Set(),
+              (segs) => visitedFolders.push(segs)
+            );
+            filesToEnqueue.push(...recursive);
+          } else {
+            filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+          }
+        }
+
+        // Immediately recreate all original folders on disk (including empty folders)
+        if (activeDirHandle && visitedFolders.length > 0) {
+          for (const segs of visitedFolders) {
+            try {
+              await getOrCreateSubdirectory(activeDirHandle, segs);
+            } catch {
+              // ignore individual folder errors
+            }
+          }
+        }
+
+        if (filesToEnqueue.length > 0) {
+          downloadStartTimeRef.current = Date.now();
+          downloadManager.enqueueFiles(filesToEnqueue);
+          showToast(
+            activeDirHandle || (window as any).electronAPI?.saveFileNative
+              ? `Iniciando download de ${filesToEnqueue.length} arquivo(s) recriando as mesmas pastas no disco!`
+              : `Iniciando download de ${filesToEnqueue.length} arquivo(s)!`,
+            'success'
+          );
+        } else if (activeDirHandle && visitedFolders.length > 0) {
+          showToast('Pastas vazias recriadas com o nome original na pasta destino!', 'success');
+        } else {
+          showToast('Nenhum arquivo disponível para download.', 'info');
+        }
+      } catch (err: any) {
+        console.error('Erro ao mapear arquivos para download:', err);
+        showToast(err?.message || 'Erro ao preparar arquivos do Drive.', 'error');
       }
       return;
     }
@@ -434,54 +631,124 @@ export default function App() {
     const selectedItems = files.filter((f) => selectedFileIds.has(f.id));
     if (selectedItems.length === 0) return;
 
-    if (!localDirHandle && !localFolderName) {
-      handleQuickSetDownloads();
-    }
-
     const currentFolderSegments = getCurrentFolderPath();
-    const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+    const hasFoldersToCreate = currentFolderSegments.length > 0 || selectedItems.some((f) => f.isFolder);
+    const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
+    if (aborted) return;
 
-    for (const item of selectedItems) {
-      if (item.isFolder) {
-        showToast(`Mapeando subpastas de "${item.name}"...`, 'info');
-        const recursiveFiles = await listAllFilesRecursively(token, item.id, [
-          ...currentFolderSegments,
-          item.name,
-        ]);
-        filesToEnqueue.push(...recursiveFiles);
-      } else {
-        filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+    try {
+      const visitedFolders: string[][] = [];
+      const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
+
+      if (currentFolderSegments.length > 0) {
+        visitedFolders.push(currentFolderSegments);
       }
-    }
 
-    if (filesToEnqueue.length > 0) {
-      setDownloadStartTime(Date.now());
-      downloadManager.enqueueFiles(filesToEnqueue);
-      showToast(
-        `${filesToEnqueue.length} arquivo(s) enfileirados recriando a mesma estrutura de pastas!`,
-        'success'
-      );
+      for (const item of selectedItems) {
+        if (item.isFolder) {
+          showToast(`Mapeando subpastas de "${item.name}"...`, 'info');
+          const recursiveFiles = await listAllFilesRecursively(
+            token,
+            item.id,
+            [...currentFolderSegments, item.name],
+            new Set(),
+            (segs) => visitedFolders.push(segs)
+          );
+          filesToEnqueue.push(...recursiveFiles);
+        } else {
+          filesToEnqueue.push({ file: item, pathSegments: currentFolderSegments });
+        }
+      }
+
+      if (activeDirHandle && visitedFolders.length > 0) {
+        for (const segs of visitedFolders) {
+          try {
+            await getOrCreateSubdirectory(activeDirHandle, segs);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (filesToEnqueue.length > 0) {
+        downloadStartTimeRef.current = Date.now();
+        downloadManager.enqueueFiles(filesToEnqueue);
+        showToast(
+          activeDirHandle || (window as any).electronAPI?.saveFileNative
+            ? `${filesToEnqueue.length} arquivo(s) enfileirados recriando a mesma estrutura de pastas no disco!`
+            : `${filesToEnqueue.length} arquivo(s) enfileirados para download!`,
+          'success'
+        );
+      } else if (activeDirHandle && visitedFolders.length > 0) {
+        showToast('Pasta(s) vazia(s) criada(s) com o mesmo nome original na pasta destino!', 'success');
+      } else {
+        showToast('Nenhum arquivo encontrado nas pastas selecionadas.', 'info');
+      }
+    } catch (err: any) {
+      console.error('Erro ao baixar selecionados:', err);
+      showToast(err?.message || 'Erro ao preparar arquivos selecionados.', 'error');
     }
   };
 
   const handleDownloadSingle = async (file: DriveFile) => {
     if (!token) return;
     const currentFolderSegments = getCurrentFolderPath();
-    setDownloadStartTime(Date.now());
-    if (file.isFolder) {
-      showToast(`Mapeando pasta "${file.name}"...`, 'info');
-      const recursiveFiles = await listAllFilesRecursively(token, file.id, [
-        ...currentFolderSegments,
-        file.name,
-      ]);
-      downloadManager.enqueueFiles(recursiveFiles);
-      showToast(
-        `Pasta "${file.name}" (${recursiveFiles.length} arquivos) enfileirada com estrutura idêntica!`,
-        'success'
-      );
-    } else {
-      downloadManager.enqueueFiles([{ file, pathSegments: currentFolderSegments }]);
-      showToast(`Download de "${file.name}" iniciado!`, 'success');
+    const hasFoldersToCreate = currentFolderSegments.length > 0 || file.isFolder;
+    const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
+    if (aborted) return;
+
+    try {
+      if (file.isFolder) {
+        showToast(`Mapeando pasta "${file.name}"...`, 'info');
+        const visitedFolders: string[][] = [];
+        const recursiveFiles = await listAllFilesRecursively(
+          token,
+          file.id,
+          [...currentFolderSegments, file.name],
+          new Set(),
+          (segs) => visitedFolders.push(segs)
+        );
+
+        if (activeDirHandle && visitedFolders.length > 0) {
+          for (const segs of visitedFolders) {
+            try {
+              await getOrCreateSubdirectory(activeDirHandle, segs);
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        if (recursiveFiles.length === 0) {
+          showToast(
+            activeDirHandle
+              ? `Pasta vazia "${file.name}" criada na pasta destino!`
+              : `A pasta "${file.name}" está vazia.`,
+            'info'
+          );
+          return;
+        }
+        downloadStartTimeRef.current = Date.now();
+        downloadManager.enqueueFiles(recursiveFiles);
+        showToast(
+          `Pasta "${file.name}" (${recursiveFiles.length} arquivos) enfileirada com estrutura idêntica!`,
+          'success'
+        );
+      } else {
+        if (activeDirHandle && currentFolderSegments.length > 0) {
+          try {
+            await getOrCreateSubdirectory(activeDirHandle, currentFolderSegments);
+          } catch {
+            // ignore
+          }
+        }
+        downloadStartTimeRef.current = Date.now();
+        downloadManager.enqueueFiles([{ file, pathSegments: currentFolderSegments }]);
+        showToast(`Download de "${file.name}" iniciado!`, 'success');
+      }
+    } catch (err: any) {
+      console.error('Erro ao baixar item:', err);
+      showToast(err?.message || `Erro ao baixar "${file.name}".`, 'error');
     }
   };
 
@@ -515,15 +782,167 @@ export default function App() {
     const selectedItems = files.filter((f) => selectedFileIds.has(f.id));
     if (selectedItems.length === 0) return;
 
-    showToast('Preparando compactação ZIP dos arquivos selecionados...', 'info');
+    const controller = new AbortController();
+    zipAbortRef.current = controller;
+    setIsCancellingZip(false);
+    setZipSelectedCount(selectedItems.length);
+    setZipProgress({
+      phase: 'scanning',
+      percent: 0,
+      currentItem: 'Preparando itens selecionados...',
+      processedFiles: 0,
+      totalFiles: 0,
+      folderCount: 0,
+      downloadedBytes: 0,
+      totalBytesExpected: 0,
+    });
+    setIsZipModalOpen(true);
+
+    const startTime = Date.now();
     try {
-      await exportSelectedFilesToZip(token, selectedItems, localDirHandle, (pct, name) => {
-        // progress callback
+      const zipStats = await exportSelectedFilesToZip(
+        token,
+        selectedItems,
+        localDirHandle,
+        (progress) => setZipProgress(progress),
+        controller.signal,
+        getCurrentFolderPath()
+      );
+      const elapsed = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+      const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
+
+      setIsZipModalOpen(false);
+      setDownloadStats({
+        count: zipStats.fileCount,
+        errorCount: 0,
+        folderCount: zipStats.folderCount,
+        bytes: zipStats.totalBytes,
+        elapsedSeconds: elapsed,
+        averageSpeedBytes: avgSpeed,
+        peakSpeedBytes: avgSpeed,
+        isZip: true,
       });
+      setIsSuccessModalOpen(true);
       showToast('Arquivo ZIP gerado com sucesso!', 'success');
     } catch (err: any) {
-      console.error('Erro ao gerar ZIP:', err);
-      showToast('Falha na criação do ZIP.', 'error');
+      setIsZipModalOpen(false);
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        showToast('Compactação ZIP cancelada pelo usuário.', 'info');
+      } else {
+        console.error('Erro ao gerar ZIP:', err);
+        showToast(err?.message || 'Falha na criação do ZIP.', 'error');
+      }
+    } finally {
+      setIsCancellingZip(false);
+      zipAbortRef.current = null;
+    }
+  };
+
+  const handleCancelZip = () => {
+    if (zipAbortRef.current) {
+      setIsCancellingZip(true);
+      zipAbortRef.current.abort();
+    } else {
+      setIsZipModalOpen(false);
+    }
+  };
+
+  const handleRequestDownloadAllZip = async () => {
+    if (!token) {
+      showToast('Por favor, conecte sua conta Google Drive primeiro.', 'error');
+      return;
+    }
+    setIsCancellingDownloadAll(false);
+    setDownloadAllProgress({
+      phase: 'scanning',
+      percent: 0,
+      currentItem: '',
+      processedFiles: 0,
+      totalFiles: 0,
+      folderCount: 0,
+      downloadedBytes: 0,
+      totalBytesExpected: 0,
+    });
+    const checkpoint = await getZipAllCheckpointSummary();
+    setSavedZipCheckpoint(checkpoint);
+    setIsDownloadAllModalOpen(true);
+  };
+
+  const runDownloadAllZip = async (resumeFromCheckpoint: boolean) => {
+    if (!token) return;
+    const controller = new AbortController();
+    downloadAllAbortRef.current = controller;
+    setIsCancellingDownloadAll(false);
+    setSavedZipCheckpoint(null);
+    setIsDownloadingAllZip(true);
+    const startTime = Date.now();
+
+    try {
+      const zipStats = await exportAllDriveToZip(
+        token,
+        localDirHandle,
+        (progress) => setDownloadAllProgress(progress),
+        controller.signal,
+        resumeFromCheckpoint
+      );
+      const elapsed = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+      const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
+
+      setIsDownloadAllModalOpen(false);
+      setDownloadStats({
+        count: zipStats.fileCount,
+        errorCount: 0,
+        folderCount: zipStats.folderCount,
+        bytes: zipStats.totalBytes,
+        elapsedSeconds: elapsed,
+        averageSpeedBytes: avgSpeed,
+        peakSpeedBytes: avgSpeed,
+        isZip: true,
+      });
+      setIsSuccessModalOpen(true);
+      showToast('Download completo do Google Drive em ZIP concluído!', 'success');
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        const checkpoint = await getZipAllCheckpointSummary();
+        setSavedZipCheckpoint(checkpoint);
+        showToast(
+          checkpoint
+            ? 'Operação cancelada. Progresso salvo na memória para continuar depois.'
+            : 'Operação "Baixar Tudo" cancelada.',
+          'info'
+        );
+      } else {
+        console.error('Erro ao baixar todo o Drive em ZIP:', err);
+        showToast(err?.message || 'Falha ao gerar o ZIP completo do Drive.', 'error');
+      }
+      setIsDownloadAllModalOpen(false);
+    } finally {
+      setIsDownloadingAllZip(false);
+      setIsCancellingDownloadAll(false);
+      downloadAllAbortRef.current = null;
+    }
+  };
+
+  const handleConfirmFreshDownloadAllZip = () => {
+    void runDownloadAllZip(false);
+  };
+
+  const handleResumeDownloadAllZip = () => {
+    void runDownloadAllZip(true);
+  };
+
+  const handleDenyResumeAndStartFresh = async () => {
+    await clearZipAllCheckpoint();
+    setSavedZipCheckpoint(null);
+    void runDownloadAllZip(false);
+  };
+
+  const handleCancelDownloadAllZip = () => {
+    if (isDownloadingAllZip && downloadAllAbortRef.current) {
+      setIsCancellingDownloadAll(true);
+      downloadAllAbortRef.current.abort();
+    } else {
+      setIsDownloadAllModalOpen(false);
     }
   };
 
@@ -743,10 +1162,11 @@ export default function App() {
               onDownloadSingle={handleDownloadSingle}
               onToggleWatchSingle={handleToggleWatchSingle}
               isItemWatched={(id) => syncEngine.isItemWatched(id)}
-              localFolderConfigured={!!localDirHandle}
+              localFolderConfigured={!!localFolderName}
               concurrency={concurrency}
               onStartDownload={handleStartDownload}
               onStopDownload={handleStopDownload}
+              onDownloadAllDriveZip={handleRequestDownloadAllZip}
               isDownloading={telemetry.hasActiveDownloads && !telemetry.isPaused}
               isPaused={telemetry.isPaused}
               hasPendingTasks={telemetry.activeCount > 0 || telemetry.queuedCount > 0}
@@ -788,10 +1208,15 @@ export default function App() {
         isOpen={isSuccessModalOpen}
         onClose={() => setIsSuccessModalOpen(false)}
         completedCount={downloadStats.count}
+        errorCount={downloadStats.errorCount}
         folderCount={downloadStats.folderCount}
         totalBytes={downloadStats.bytes}
         elapsedSeconds={downloadStats.elapsedSeconds}
+        averageSpeedBytes={downloadStats.averageSpeedBytes}
+        peakSpeedBytes={downloadStats.peakSpeedBytes}
         folderName={localFolderName}
+        dirHandle={localDirHandle}
+        isZip={downloadStats.isZip}
         onOpenFolderPicker={() => setIsFolderModalOpen(true)}
       />
 
@@ -804,6 +1229,29 @@ export default function App() {
         syncState={syncState}
         localFolderName={localFolderName}
         concurrency={concurrency}
+      />
+
+      {/* Full Drive ZIP Permission, Resume & Progress Tracking Modal */}
+      <DownloadAllZipModal
+        isOpen={isDownloadAllModalOpen}
+        isProcessing={isDownloadingAllZip}
+        isCancelling={isCancellingDownloadAll}
+        progress={downloadAllProgress}
+        savedCheckpoint={savedZipCheckpoint}
+        localFolderName={localFolderName}
+        onConfirmFresh={handleConfirmFreshDownloadAllZip}
+        onResumeCheckpoint={handleResumeDownloadAllZip}
+        onDenyResumeAndStartFresh={handleDenyResumeAndStartFresh}
+        onCancel={handleCancelDownloadAllZip}
+      />
+      {/* Selected Items ZIP Progress Tracking Modal */}
+      <ZipProgressModal
+        isOpen={isZipModalOpen}
+        isCancelling={isCancellingZip}
+        progress={zipProgress}
+        localFolderName={localFolderName}
+        selectedCount={zipSelectedCount}
+        onCancel={handleCancelZip}
       />
     </div>
   );

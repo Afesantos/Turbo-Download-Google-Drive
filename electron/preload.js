@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
       fileName,
       fileBuffer,
     }),
+  openFolder: (folderPath) => ipcRenderer.invoke('native-open-folder', folderPath),
 });

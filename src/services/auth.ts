@@ -45,8 +45,8 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  // Check redirect result on load
-  getRedirectResult(auth)
+  // Check redirect result once on load
+  const redirectPromise = getRedirectResult(auth)
     .then((result) => {
       if (result) {
         const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -61,26 +61,14 @@ export const initAuth = (
     });
 
   return onAuthStateChanged(auth, async (user: User | null) => {
+    await redirectPromise;
     if (user) {
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else if (!isSigningIn) {
-        // If user is logged in via redirect but credential isn't in memory yet, try getting OAuth credential
-        const credential = GoogleAuthProvider.credentialFromResult(await getRedirectResult(auth) as any);
-        if (credential?.accessToken) {
-          cachedAccessToken = credential.accessToken;
-          if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-        } else {
-          // If no OAuth token in memory, keep user authenticated if possible or prompt re-auth for Drive access
-          if (onAuthSuccess && cachedAccessToken) {
-            onAuthSuccess(user, cachedAccessToken);
-          } else {
-            // If we lack Drive scope token, we can still let user connect or use cached token if present
-            if (onAuthSuccess && auth.currentUser) {
-              // Try to pass dummy or proceed
-            }
-          }
-        }
+        // Access tokens are kept strictly in memory; after a page reload, prompt re-authentication
+        cachedAccessToken = null;
+        if (onAuthFailure) onAuthFailure();
       }
     } else {
       cachedAccessToken = null;
@@ -91,7 +79,7 @@ export const initAuth = (
 
 /**
  * Must be triggered by user interaction (button click).
- * Falls back to signInWithRedirect if popup is blocked (common in iframes).
+ * Falls back to signInWithRedirect only if popup is blocked outside an iframe.
  */
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
@@ -105,21 +93,24 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.warn('Popup bloqueado ou falhou, tentando redirecionamento (redirect):', error);
-    if (
-      error?.code === 'auth/popup-blocked' ||
-      error?.code === 'auth/popup-closed-by-user' ||
-      error?.message?.includes('popup') ||
-      error?.message?.includes('cross-origin')
-    ) {
-      try {
-        await signInWithRedirect(auth, provider);
-        return null;
-      } catch (redirectErr) {
-        console.error('Erro no signInWithRedirect:', redirectErr);
-        throw redirectErr;
-      }
+    if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
+      return null;
     }
+
+    const inIframe = (() => {
+      try {
+        return typeof window !== 'undefined' && window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
+
+    if (error?.code === 'auth/popup-blocked' && !inIframe) {
+      console.warn('Popup bloqueado, tentando redirecionamento (redirect):', error);
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+
     throw error;
   } finally {
     isSigningIn = false;

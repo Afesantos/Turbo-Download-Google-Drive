@@ -85,7 +85,7 @@ class SyncEngine {
       intervalSeconds: this.intervalSeconds,
       lastCheckTimestamp: this.lastCheckTimestamp,
       watchedItems: Array.from(this.watchedItems.values()),
-      recentLogs: this.logs.slice(-50),
+      recentLogs: this.logs.slice(0, 50),
     };
     this.listeners.forEach((fn) => fn(state));
   }
