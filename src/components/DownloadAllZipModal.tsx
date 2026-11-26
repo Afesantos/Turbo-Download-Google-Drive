@@ -17,6 +17,9 @@ import {
   Trash2,
   Save,
   Calendar,
+  Search,
+  Download,
+  Layers,
 } from 'lucide-react';
 import { ZipAllProgress } from '../services/zipExport';
 import { TEMP_RECOVERY_MANIFEST_NAME, ZipAllCheckpointSummary } from '../services/zipCheckpoint';
@@ -161,53 +164,114 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
 
         {isProcessing ? (
           /* Dedicated Tracking Screen (Tela de Acompanhamento) */
-          <div className="relative z-10">
-            {/* Header */}
-            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-              <div className="flex items-center space-x-3 min-w-0 flex-1">
-                <div className="relative shrink-0">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30">
-                    <Archive className="w-6 h-6" />
-                  </div>
-                  <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-slate-900 border-2 border-emerald-400 flex items-center justify-center">
-                    <RefreshCw className="w-3 h-3 text-emerald-400 animate-spin" />
-                  </div>
-                </div>
+          (() => {
+            const isScanning = progress.phase === 'scanning';
+            const isDownloadingPhase = progress.phase === 'downloading';
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center flex-wrap gap-2">
-                    <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
-                      Acompanhamento — Baixar Tudo
-                    </h3>
-                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full">
-                      {PHASE_LABELS[progress.phase]}
+            return (
+              <div className="relative z-10">
+                {/* Phase Banner Indicator */}
+                <div
+                  className={`mb-4 px-3.5 py-2 rounded-2xl border flex items-center justify-between gap-2 transition-all duration-300 ${
+                    isScanning
+                      ? 'bg-indigo-950/70 border-indigo-800/80 text-indigo-200'
+                      : isDownloadingPhase
+                      ? 'bg-emerald-950/70 border-emerald-800/80 text-emerald-200'
+                      : 'bg-purple-950/70 border-purple-800/80 text-purple-200'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2 truncate">
+                    {isScanning ? (
+                      <Search className="w-4 h-4 text-indigo-400 shrink-0 animate-pulse" />
+                    ) : isDownloadingPhase ? (
+                      <Download className="w-4 h-4 text-emerald-400 shrink-0 animate-bounce" />
+                    ) : (
+                      <Layers className="w-4 h-4 text-purple-400 shrink-0 animate-spin" />
+                    )}
+                    <span className="text-xs font-bold uppercase tracking-wider truncate">
+                      {isScanning
+                        ? 'Fase 1: Leitura e Mapeamento no Google Drive'
+                        : isDownloadingPhase
+                        ? 'Fase 2: Download e Gravação dos Arquivos'
+                        : 'Fase 3: Compactação ZIP Final'}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 min-w-0">
-                    <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                    <span className="truncate max-w-full">
-                      Destino:{' '}
-                      <strong className="text-white font-mono">
-                        {localFolderName || 'Downloads / DriveSync'}
-                      </strong>
-                    </span>
-                  </p>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${
+                      isScanning
+                        ? 'bg-indigo-900 text-indigo-300 border-indigo-700'
+                        : isDownloadingPhase
+                        ? 'bg-emerald-900 text-emerald-300 border-emerald-700'
+                        : 'bg-purple-900 text-purple-300 border-purple-700'
+                    }`}
+                  >
+                    {isScanning ? 'Mapeando' : isDownloadingPhase ? 'Baixando' : 'Finalizando'}
+                  </span>
                 </div>
-              </div>
 
-              <div className="text-right shrink-0">
-                <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-end space-x-1">
-                  <Clock className="w-3 h-3" />
-                  <span>Decorrido</span>
+                {/* Header */}
+                <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                  <div className="flex items-center space-x-3 min-w-0 flex-1">
+                    <div className="relative shrink-0">
+                      <div
+                        className={`w-12 h-12 rounded-2xl bg-gradient-to-tr text-white flex items-center justify-center shadow-lg transition-all duration-500 ${
+                          isScanning
+                            ? 'from-indigo-600 to-blue-600 shadow-indigo-600/30'
+                            : isDownloadingPhase
+                            ? 'from-emerald-600 to-teal-600 shadow-emerald-600/30'
+                            : 'from-purple-600 to-indigo-600 shadow-purple-600/30'
+                        }`}
+                      >
+                        <Archive className="w-6 h-6" />
+                      </div>
+                      <div
+                        className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-slate-900 border-2 flex items-center justify-center ${
+                          isScanning ? 'border-indigo-400' : isDownloadingPhase ? 'border-emerald-400' : 'border-purple-400'
+                        }`}
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 animate-spin ${
+                            isScanning ? 'text-indigo-400' : isDownloadingPhase ? 'text-emerald-400' : 'text-purple-400'
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center flex-wrap gap-2">
+                        <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
+                          Acompanhamento — Baixar Tudo
+                        </h3>
+                      </div>
+                      <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 min-w-0">
+                        <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                        <span className="truncate max-w-full">
+                          Destino:{' '}
+                          <strong className="text-white font-mono">
+                            {localFolderName || 'Downloads / DriveSync'}
+                          </strong>
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-end space-x-1">
+                      <Clock className="w-3 h-3" />
+                      <span>Decorrido</span>
+                    </div>
+                    <div
+                      className={`text-lg font-extrabold font-mono leading-tight ${
+                        isScanning ? 'text-indigo-400' : isDownloadingPhase ? 'text-emerald-400' : 'text-purple-400'
+                      }`}
+                    >
+                      {timing.elapsedFormatted}
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-400">
+                      Início: <strong className="text-slate-200">{timing.startClock}</strong>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-lg font-extrabold font-mono text-emerald-400 leading-tight">
-                  {timing.elapsedFormatted}
-                </div>
-                <div className="text-[10px] font-mono text-slate-400">
-                  Início: <strong className="text-slate-200">{timing.startClock}</strong>
-                </div>
-              </div>
-            </div>
 
             {/* Em Curso Indicator + Live Read Speed Graph */}
             <div className="flex flex-col sm:flex-row items-center gap-4 my-3">
@@ -357,6 +421,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               </button>
             </div>
           </div>
+            );
+          })()
         ) : isAuthExpired ? (
           /* Step 1C: OAuth2 Access Token Expired Mid-Operation — 1-Click Renewal */
           <div className="relative z-10">
