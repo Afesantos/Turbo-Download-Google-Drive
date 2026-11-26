@@ -12,6 +12,7 @@ import {
 import { ZipAllProgress } from '../services/zipExport';
 import { formatBytes } from '../utils/formatters';
 import { computeZipTimingMetrics } from '../utils/zipTiming';
+import { LiveSpeedChart } from './LiveSpeedChart';
 
 interface ZipProgressModalProps {
   isOpen: boolean;
@@ -113,9 +114,9 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
             </div>
           </div>
 
-          {/* Centered Spinning Circular Indicator */}
-          <div className="flex flex-col items-center justify-center my-3">
-            <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center">
+          {/* Em Curso Indicator + Live Read Speed Graph */}
+          <div className="flex flex-col sm:flex-row items-center gap-4 my-3">
+            <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
               <div className="absolute inset-0 rounded-full bg-amber-500/15 blur-md" />
               <div className="absolute inset-0 rounded-full border-4 border-slate-800" />
               <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-amber-400 border-r-orange-400 animate-spin" />
@@ -129,6 +130,8 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
                 </span>
               </div>
             </div>
+
+            <LiveSpeedChart progress={progress} isActive={isOpen} accent="amber" />
           </div>
 
           {/* Progress Bar */}

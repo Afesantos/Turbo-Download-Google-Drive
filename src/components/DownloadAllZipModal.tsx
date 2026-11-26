@@ -21,6 +21,7 @@ import { ZipAllProgress } from '../services/zipExport';
 import { TEMP_RECOVERY_MANIFEST_NAME, ZipAllCheckpointSummary } from '../services/zipCheckpoint';
 import { formatBytes, formatDateTime } from '../utils/formatters';
 import { computeZipTimingMetrics, formatDurationClock } from '../utils/zipTiming';
+import { LiveSpeedChart } from './LiveSpeedChart';
 
 export interface ErrorRecoveryInfo {
   message: string;
@@ -207,9 +208,9 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               </div>
             </div>
 
-            {/* Centered Spinning Circular Indicator */}
-            <div className="flex flex-col items-center justify-center my-3">
-              <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center">
+            {/* Em Curso Indicator + Live Read Speed Graph */}
+            <div className="flex flex-col sm:flex-row items-center gap-4 my-3">
+              <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center shrink-0">
                 <div className="absolute inset-0 rounded-full bg-emerald-500/15 blur-md" />
                 <div className="absolute inset-0 rounded-full border-4 border-slate-800" />
                 <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-emerald-400 border-r-teal-400 animate-spin" />
@@ -223,6 +224,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   </span>
                 </div>
               </div>
+
+              <LiveSpeedChart progress={progress} isActive={isOpen && isProcessing} accent="emerald" />
             </div>
 
             {/* Progress Bar */}
