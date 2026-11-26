@@ -14,11 +14,13 @@ import {
   Play,
   Timer,
   Upload,
+  Trash2,
+  Save,
 } from 'lucide-react';
 import { ZipAllProgress } from '../services/zipExport';
 import { TEMP_RECOVERY_MANIFEST_NAME, ZipAllCheckpointSummary } from '../services/zipCheckpoint';
 import { formatBytes, formatDateTime } from '../utils/formatters';
-import { computeZipTimingMetrics } from '../utils/zipTiming';
+import { computeZipTimingMetrics, formatDurationClock } from '../utils/zipTiming';
 
 export interface ErrorRecoveryInfo {
   message: string;
@@ -33,6 +35,7 @@ interface DownloadAllZipModalProps {
   isCancelling: boolean;
   isAuthExpired?: boolean;
   isRenewingAuth?: boolean;
+  isCancelConfirm?: boolean;
   errorRecoveryInfo?: ErrorRecoveryInfo | null;
   progress: ZipAllProgress;
   savedCheckpoint: ZipAllCheckpointSummary | null;
@@ -42,6 +45,8 @@ interface DownloadAllZipModalProps {
   onDenyResumeAndStartFresh: () => void;
   onRenewAuthAndResume?: () => void;
   onImportRecoveryFile?: (file: File) => void;
+  onKeepSavedAndClose?: () => void;
+  onDeleteSavedAndClose?: () => void;
   onCancel: () => void;
 }
 
@@ -58,6 +63,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   isCancelling,
   isAuthExpired = false,
   isRenewingAuth = false,
+  isCancelConfirm = false,
   errorRecoveryInfo = null,
   progress,
   savedCheckpoint,
@@ -67,6 +73,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   onDenyResumeAndStartFresh,
   onRenewAuthAndResume,
   onImportRecoveryFile,
+  onKeepSavedAndClose,
+  onDeleteSavedAndClose,
   onCancel,
 }) => {
   const startTimeRef = useRef<number>(Date.now());
@@ -90,8 +98,9 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isErrorState = !isProcessing && !isAuthExpired && errorRecoveryInfo !== null;
-  const isResumePrompt = !isProcessing && !isAuthExpired && !isErrorState && savedCheckpoint !== null;
+  const isErrorState = !isProcessing && !isAuthExpired && !isCancelConfirm && errorRecoveryInfo !== null;
+  const isResumePrompt =
+    !isProcessing && !isAuthExpired && !isCancelConfirm && !isErrorState && savedCheckpoint !== null;
   const timing = computeZipTimingMetrics(progress, startTimeRef.current, nowMs);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,7 +119,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             ? 'max-w-xl border-emerald-500/45 ring-4 ring-emerald-500/15'
             : isAuthExpired || isErrorState
             ? 'max-w-lg border-rose-500/45 ring-4 ring-rose-500/15'
-            : isResumePrompt
+            : isCancelConfirm || isResumePrompt
             ? 'max-w-lg border-blue-500/45 ring-4 ring-blue-500/15'
             : 'max-w-md border-amber-500/40 ring-4 ring-amber-500/10'
         }`}
@@ -129,7 +138,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               ? 'bg-emerald-500/15'
               : isAuthExpired || isErrorState
               ? 'bg-rose-500/15'
-              : isResumePrompt
+              : isCancelConfirm || isResumePrompt
               ? 'bg-blue-500/15'
               : 'bg-amber-500/15'
           }`}
@@ -399,6 +408,73 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               )}
             </div>
           </div>
+        ) : isCancelConfirm ? (
+          /* Step 1E: User Cancelled — Ask to Keep or Delete Saved Record File */
+          <div className="relative z-10">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shadow-lg shadow-amber-500/20 mb-4">
+                <Save className="w-7 h-7" />
+              </div>
+
+              <h3 className="font-extrabold text-lg text-white tracking-tight">
+                Processo Cancelado — Manter Registro Salvo?
+              </h3>
+
+              <div className="mt-3 space-y-3 text-left w-full">
+                <div className="bg-amber-950/35 border border-amber-800/70 rounded-2xl p-3.5 text-xs text-amber-100 flex items-start space-x-2.5">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    O progresso capturado até o cancelamento foi registrado no arquivo temporário{' '}
+                    <strong className="font-mono text-white">{TEMP_RECOVERY_MANIFEST_NAME}</strong>.
+                    Deseja <strong>manter o arquivo salvo</strong> para retomar de onde parou depois,
+                    ou prefere <strong>excluir</strong> esse registro agora?
+                  </p>
+                </div>
+
+                {savedCheckpoint && (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        {savedCheckpoint.scanCompleted ? 'Arquivos Capturados' : 'Pastas Mapeadas'}
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-white mt-0.5 block">
+                        {savedCheckpoint.scanCompleted
+                          ? `${savedCheckpoint.completedFiles} / ${savedCheckpoint.totalFiles}`
+                          : `${savedCheckpoint.scannedFolders} (${savedCheckpoint.totalFiles} arqs)`}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        Volume Salvo
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-emerald-400 mt-0.5 block">
+                        {formatBytes(savedCheckpoint.downloadedBytes)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                onClick={onDeleteSavedAndClose || onCancel}
+                className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-rose-950/80 hover:border-rose-700/70 hover:text-rose-200 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Excluir Arquivo</span>
+              </button>
+
+              <button
+                onClick={onKeepSavedAndClose || onCancel}
+                className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Manter Arquivo Salvo</span>
+              </button>
+            </div>
+          </div>
         ) : isErrorState && errorRecoveryInfo ? (
           /* Step 1D: Non-401 Error with Captured Content Saved in Temp Recovery File */
           <div className="relative z-10">
@@ -527,14 +603,19 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   </div>
                 </div>
 
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2.5 flex items-center justify-between text-[11px] text-slate-300">
-                  <span className="flex items-center space-x-1.5">
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-2.5 flex items-center justify-between gap-2 text-[11px] text-slate-300">
+                  <span className="flex items-center space-x-1.5 min-w-0">
                     <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>Pausado em {formatDateTime(savedCheckpoint.updatedAt)}</span>
+                    <span className="truncate">Pausado em {formatDateTime(savedCheckpoint.updatedAt)}</span>
                   </span>
-                  <span className="font-mono font-bold text-blue-400">
-                    {savedCheckpoint.percent}%
-                  </span>
+                  <div className="flex items-center space-x-2 shrink-0 font-mono">
+                    {savedCheckpoint.elapsedMs > 0 && (
+                      <span className="text-slate-300">
+                        Decorrido: <strong className="text-white">{formatDurationClock(Math.floor(savedCheckpoint.elapsedMs / 1000))}</strong>
+                      </span>
+                    )}
+                    <span className="font-bold text-blue-400">{savedCheckpoint.percent}%</span>
+                  </div>
                 </div>
               </div>
             </div>

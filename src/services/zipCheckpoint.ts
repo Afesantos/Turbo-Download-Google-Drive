@@ -53,6 +53,8 @@ export interface ZipAllCheckpointMeta {
   visitedFolderIds?: string[];
   scannedFolders?: number;
   discoveredFolders?: number;
+  accumulatedElapsedMs?: number;
+  accumulatedScanElapsedMs?: number;
   lastError?: string;
 }
 
@@ -67,6 +69,7 @@ export interface ZipAllCheckpointSummary {
   percent: number;
   scanCompleted: boolean;
   scannedFolders: number;
+  elapsedMs: number;
   lastError?: string;
 }
 
@@ -255,6 +258,11 @@ export const getZipAllCheckpointSummary = async (
     percent = Math.min(89, 10 + Math.round((completedFiles / totalFiles) * 79));
   }
 
+  const elapsedMs =
+    typeof meta.accumulatedElapsedMs === 'number'
+      ? Math.max(0, meta.accumulatedElapsedMs)
+      : Math.max(0, (meta.updatedAt || meta.createdAt) - meta.createdAt);
+
   return {
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
@@ -266,6 +274,7 @@ export const getZipAllCheckpointSummary = async (
     percent,
     scanCompleted,
     scannedFolders,
+    elapsedMs,
     lastError: meta.lastError,
   };
 };

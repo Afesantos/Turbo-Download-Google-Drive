@@ -54,6 +54,7 @@ import { generateUserGuidePDF } from './services/pdfGenerator';
 import { ExecutionActivityModal } from './components/ExecutionActivityModal';
 import { DownloadAllZipModal, ErrorRecoveryInfo } from './components/DownloadAllZipModal';
 import { ZipProgressModal } from './components/ZipProgressModal';
+import { useKeepAwake } from './utils/keepAwake';
 
 import { Header } from './components/Header';
 import { FolderSelectorCard } from './components/FolderSelectorCard';
@@ -145,6 +146,7 @@ export default function App() {
   const [isCancellingDownloadAll, setIsCancellingDownloadAll] = useState<boolean>(false);
   const [isDownloadAllAuthExpired, setIsDownloadAllAuthExpired] = useState<boolean>(false);
   const [isRenewingDownloadAllAuth, setIsRenewingDownloadAllAuth] = useState<boolean>(false);
+  const [isDownloadAllCancelConfirm, setIsDownloadAllCancelConfirm] = useState<boolean>(false);
   const [downloadAllErrorRecovery, setDownloadAllErrorRecovery] = useState<ErrorRecoveryInfo | null>(null);
   const [savedZipCheckpoint, setSavedZipCheckpoint] = useState<ZipAllCheckpointSummary | null>(null);
   const [downloadAllProgress, setDownloadAllProgress] = useState<ZipAllProgress>({
@@ -160,6 +162,7 @@ export default function App() {
   const downloadAllAbortRef = useRef<AbortController | null>(null);
   const [isZipModalOpen, setIsZipModalOpen] = useState<boolean>(false);
   const [isCancellingZip, setIsCancellingZip] = useState<boolean>(false);
+  const [isMappingFolders, setIsMappingFolders] = useState<boolean>(false);
   const [zipSelectedCount, setZipSelectedCount] = useState<number>(0);
   const [zipProgress, setZipProgress] = useState<ZipAllProgress>({
     phase: 'scanning',
@@ -175,6 +178,14 @@ export default function App() {
   const downloadStartTimeRef = useRef<number | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasExplicitDownloadsChoiceRef = useRef<boolean>(false);
+
+  // Prevent screen sleep, tab suspension, and accidental navigation during active mapping or downloads
+  const isTransferOrMappingActive =
+    isDownloadingAllZip ||
+    isZipModalOpen ||
+    isMappingFolders ||
+    (telemetry.hasActiveDownloads && !telemetry.isPaused);
+  useKeepAwake(isTransferOrMappingActive);
   const [downloadStats, setDownloadStats] = useState<{
     count: number;
     errorCount: number;
@@ -574,6 +585,7 @@ export default function App() {
       const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
       if (aborted) return;
 
+      setIsMappingFolders(true);
       try {
         const visitedFolders: string[][] = [];
         const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
@@ -625,6 +637,8 @@ export default function App() {
       } catch (err: any) {
         console.error('Erro ao mapear arquivos para download:', err);
         showToast(err?.message || 'Erro ao preparar arquivos do Drive.', 'error');
+      } finally {
+        setIsMappingFolders(false);
       }
       return;
     }
@@ -647,6 +661,7 @@ export default function App() {
     const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
     if (aborted) return;
 
+    setIsMappingFolders(true);
     try {
       const visitedFolders: string[][] = [];
       const filesToEnqueue: { file: DriveFile; pathSegments: string[] }[] = [];
@@ -698,6 +713,8 @@ export default function App() {
     } catch (err: any) {
       console.error('Erro ao baixar selecionados:', err);
       showToast(err?.message || 'Erro ao preparar arquivos selecionados.', 'error');
+    } finally {
+      setIsMappingFolders(false);
     }
   };
 
@@ -708,6 +725,7 @@ export default function App() {
     const { handle: activeDirHandle, aborted } = await prepareDestinationDirectory(hasFoldersToCreate);
     if (aborted) return;
 
+    setIsMappingFolders(true);
     try {
       if (file.isFolder) {
         showToast(`Mapeando pasta "${file.name}"...`, 'info');
@@ -760,6 +778,8 @@ export default function App() {
     } catch (err: any) {
       console.error('Erro ao baixar item:', err);
       showToast(err?.message || `Erro ao baixar "${file.name}".`, 'error');
+    } finally {
+      setIsMappingFolders(false);
     }
   };
 
@@ -909,6 +929,7 @@ export default function App() {
     setIsCancellingDownloadAll(false);
     setIsDownloadAllAuthExpired(false);
     setIsRenewingDownloadAllAuth(false);
+    setIsDownloadAllCancelConfirm(false);
     setDownloadAllErrorRecovery(null);
     setDownloadAllProgress({
       phase: 'scanning',
@@ -920,7 +941,25 @@ export default function App() {
       downloadedBytes: 0,
       totalBytesExpected: 0,
     });
-    const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
+
+    let activeDir = localDirHandle;
+    if (activeDir) {
+      await verifyPermission(activeDir, true);
+    } else if (!isInsideIframe() && isFileSystemAccessSupported() && !hasExplicitDownloadsChoiceRef.current) {
+      const stored = await getStoredDirectoryHandle();
+      if (stored) {
+        const granted = await verifyPermission(stored, true);
+        if (granted) {
+          activeDir = stored;
+          setLocalDirHandle(stored);
+          setLocalFolderName(stored.name);
+          setIsNativeDisk(true);
+          downloadManager.setTargetDirectory(stored);
+        }
+      }
+    }
+
+    const checkpoint = await getZipAllCheckpointSummary(activeDir);
     setSavedZipCheckpoint(checkpoint);
     setIsDownloadAllModalOpen(true);
   };
@@ -932,6 +971,7 @@ export default function App() {
     downloadAllAbortRef.current = controller;
     setIsCancellingDownloadAll(false);
     setIsDownloadAllAuthExpired(false);
+    setIsDownloadAllCancelConfirm(false);
     setDownloadAllErrorRecovery(null);
     setSavedZipCheckpoint(null);
     setIsDownloadingAllZip(true);
@@ -943,9 +983,13 @@ export default function App() {
         localDirHandle,
         (progress) => setDownloadAllProgress(progress),
         controller.signal,
-        resumeFromCheckpoint
+        resumeFromCheckpoint,
+        user?.displayName || user?.email || null
       );
-      const elapsed = Math.max(0, Math.round((Date.now() - startTime) / 1000));
+      const elapsed =
+        typeof zipStats.elapsedSeconds === 'number'
+          ? zipStats.elapsedSeconds
+          : Math.max(0, Math.round((Date.now() - startTime) / 1000));
       const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
 
       setIsDownloadAllModalOpen(false);
@@ -965,13 +1009,13 @@ export default function App() {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
         setSavedZipCheckpoint(checkpoint);
-        showToast(
-          checkpoint
-            ? 'Operação cancelada. Progresso salvo na memória para continuar depois.'
-            : 'Operação "Baixar Tudo" cancelada.',
-          'info'
-        );
-        setIsDownloadAllModalOpen(false);
+        if (checkpoint) {
+          setIsDownloadAllCancelConfirm(true);
+          setIsDownloadAllModalOpen(true);
+        } else {
+          showToast('Operação "Baixar Tudo" cancelada.', 'info');
+          setIsDownloadAllModalOpen(false);
+        }
       } else if (err?.status === 401) {
         const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
         setSavedZipCheckpoint(checkpoint);
@@ -1023,6 +1067,14 @@ export default function App() {
       if (!refreshed) return;
       activeToken = refreshed;
     }
+    if (savedZipCheckpoint) {
+      setDownloadAllProgress((prev) => ({
+        ...prev,
+        startedAt: Date.now(),
+        originalStartedAt: savedZipCheckpoint.createdAt,
+        priorElapsedMs: savedZipCheckpoint.elapsedMs,
+      }));
+    }
     void runDownloadAllZip(true, activeToken || undefined);
   };
 
@@ -1068,12 +1120,28 @@ export default function App() {
     }
   };
 
+  const handleKeepSavedAndClose = () => {
+    setIsDownloadAllCancelConfirm(false);
+    setIsDownloadAllModalOpen(false);
+    showToast('Arquivo de registro mantido salvo para continuar depois.', 'info');
+  };
+
+  const handleDeleteSavedAndClose = async () => {
+    await cleanupTempRecoveryFiles(localDirHandle);
+    setSavedZipCheckpoint(null);
+    setDownloadAllErrorRecovery(null);
+    setIsDownloadAllCancelConfirm(false);
+    setIsDownloadAllModalOpen(false);
+    showToast('Registro temporário excluído.', 'info');
+  };
+
   const handleCancelDownloadAllZip = () => {
     if (isDownloadingAllZip && downloadAllAbortRef.current) {
       setIsCancellingDownloadAll(true);
       downloadAllAbortRef.current.abort();
     } else {
       setIsDownloadAllAuthExpired(false);
+      setIsDownloadAllCancelConfirm(false);
       setDownloadAllErrorRecovery(null);
       setIsDownloadAllModalOpen(false);
     }
@@ -1371,6 +1439,7 @@ export default function App() {
         isCancelling={isCancellingDownloadAll}
         isAuthExpired={isDownloadAllAuthExpired}
         isRenewingAuth={isRenewingDownloadAllAuth}
+        isCancelConfirm={isDownloadAllCancelConfirm}
         errorRecoveryInfo={downloadAllErrorRecovery}
         progress={downloadAllProgress}
         savedCheckpoint={savedZipCheckpoint}
@@ -1380,6 +1449,8 @@ export default function App() {
         onDenyResumeAndStartFresh={handleDenyResumeAndStartFresh}
         onRenewAuthAndResume={handleRenewDownloadAllAuth}
         onImportRecoveryFile={handleImportRecoveryFile}
+        onKeepSavedAndClose={handleKeepSavedAndClose}
+        onDeleteSavedAndClose={handleDeleteSavedAndClose}
         onCancel={handleCancelDownloadAllZip}
       />
       {/* Selected Items ZIP Progress Tracking Modal */}

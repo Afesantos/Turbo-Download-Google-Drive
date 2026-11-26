@@ -24,6 +24,7 @@ export interface ZipExportStats {
   fileCount: number;
   folderCount: number;
   totalBytes: number;
+  elapsedSeconds?: number;
 }
 
 const sanitizeSegment = (name: string): string => {
@@ -65,7 +66,10 @@ export interface ZipAllProgress {
   downloadedBytes: number;
   totalBytesExpected: number;
   startedAt?: number;
+  originalStartedAt?: number;
+  priorElapsedMs?: number;
   scanStartedAt?: number;
+  priorScanElapsedMs?: number;
   scanCompletedAt?: number;
   downloadStartedAt?: number;
   initialResumedBytes?: number;
@@ -435,16 +439,40 @@ export const exportSelectedFilesToZip = async (
   };
 };
 
+const buildFullDriveBackupZipName = (userNameOrEmail?: string | null): string => {
+  const rawSource = (userNameOrEmail || '').trim();
+  let firstName = 'Usuario';
+
+  if (rawSource) {
+    if (rawSource.includes('@') && !rawSource.includes(' ')) {
+      firstName = rawSource.split('@')[0] || 'Usuario';
+    } else {
+      firstName = rawSource.split(/\s+/)[0] || 'Usuario';
+    }
+  }
+
+  const safeFirstName = sanitizeSegment(firstName).replace(/\s+/g, '') || 'Usuario';
+  const now = new Date();
+  const pad2 = (n: number) => n.toString().padStart(2, '0');
+  const datePart = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const timePart = `${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
+
+  return `Backup-Drive-${safeFirstName}-${datePart}_${timePart}.zip`;
+};
+
 export const exportAllDriveToZip = async (
   accessToken: string,
   targetDirHandle: FileSystemDirectoryHandle | null,
   onProgress?: (progress: ZipAllProgress) => void,
   signal?: AbortSignal,
-  resumeFromCheckpoint: boolean = false
+  resumeFromCheckpoint: boolean = false,
+  userNameOrEmail?: string | null
 ): Promise<ZipExportStats> => {
   const zip = new JSZip();
   const startedAt = Date.now();
   const scanStartedAt = startedAt;
+  let priorElapsedMs = 0;
+  let priorScanElapsedMs = 0;
   let scanCompletedAt: number | undefined;
   let downloadStartedAt: number | undefined;
   let initialResumedBytes = 0;
@@ -472,16 +500,38 @@ export const exportAllDriveToZip = async (
     discoveredFolders: 1,
   };
 
+  const emitProgress = (
+    patch: Omit<
+      ZipAllProgress,
+      'startedAt' | 'originalStartedAt' | 'priorElapsedMs' | 'scanStartedAt' | 'priorScanElapsedMs'
+    >
+  ) => {
+    onProgress?.({
+      ...patch,
+      startedAt,
+      originalStartedAt: checkpointCreatedAt,
+      priorElapsedMs,
+      scanStartedAt,
+      priorScanElapsedMs,
+    });
+  };
+
   const buildCurrentMeta = (lastError?: string): ZipAllCheckpointMeta => {
+    const now = Date.now();
     const filesSnapshot = scanCompleted ? allDriveFiles : scanState.files;
     const totalExpected = filesSnapshot.reduce(
       (sum, item) => sum + parseInt(item.file.size || '0', 10),
       0
     );
+    const currentSessionElapsed = Math.max(0, now - startedAt);
+    const currentScanElapsed = scanCompleted
+      ? priorScanElapsedMs + Math.max(0, (scanCompletedAt || now) - scanStartedAt)
+      : priorScanElapsedMs + Math.max(0, now - scanStartedAt);
+
     return {
       id: 'active_session',
       createdAt: checkpointCreatedAt,
-      updatedAt: Date.now(),
+      updatedAt: now,
       files: filesSnapshot,
       completedItems,
       usedZipPathsLower: Array.from(usedZipPathsLower),
@@ -495,27 +545,39 @@ export const exportAllDriveToZip = async (
       visitedFolderIds: scanState.visitedFolderIds,
       scannedFolders: Math.max(scannedFolders, scanState.scannedFolders),
       discoveredFolders: Math.max(discoveredFolders, scanState.discoveredFolders),
+      accumulatedElapsedMs: priorElapsedMs + currentSessionElapsed,
+      accumulatedScanElapsedMs: currentScanElapsed,
       lastError,
     };
   };
 
   const persistErrorRecoveryFiles = async (err: any) => {
-    if (err?.name === 'AbortError' || signal?.aborted) return;
+    const isCancelled = err?.name === 'AbortError' || signal?.aborted;
+    const latestMeta = buildCurrentMeta(
+      isCancelled ? 'Processo cancelado pelo usuário' : err?.message || 'Erro durante a transferência'
+    );
 
-    const latestMeta = buildCurrentMeta(err?.message || 'Erro durante a transferência');
+    const hasProgress =
+      latestMeta.files.length > 0 ||
+      (latestMeta.visitedFolderIds?.length || 0) > 0 ||
+      downloadedCount > 0;
+
+    if (isCancelled && !hasProgress) {
+      return;
+    }
 
     try {
       const recoveryRes = await saveTempRecoveryManifest(
         latestMeta,
         targetDirHandle,
-        'error',
-        err?.message || 'Erro desconhecido durante o download.',
-        true
+        isCancelled ? 'in_progress' : 'error',
+        isCancelled ? undefined : err?.message || 'Erro desconhecido durante o download.',
+        !isCancelled
       );
       if (downloadedCount > 0) {
         await saveTempPartialZipOnError(zip, targetDirHandle);
       }
-      if (err && typeof err === 'object') {
+      if (!isCancelled && err && typeof err === 'object') {
         err.recoveryFileName = recoveryRes.fileName;
         err.recoverySavedToDisk = recoveryRes.savedToDisk;
         err.recoveryDownloaded = recoveryRes.downloadedToUser;
@@ -546,8 +608,18 @@ export const exportAllDriveToZip = async (
       if (saved) {
         loadedSaved = true;
         checkpointCreatedAt = saved.meta.createdAt || startedAt;
+        priorElapsedMs =
+          typeof saved.meta.accumulatedElapsedMs === 'number'
+            ? Math.max(0, saved.meta.accumulatedElapsedMs)
+            : Math.max(0, (saved.meta.updatedAt || checkpointCreatedAt) - checkpointCreatedAt);
         saved.meta.uniqueFolders.forEach((f) => uniqueFolders.add(f));
         scanCompleted = saved.meta.scanCompleted !== false;
+        priorScanElapsedMs =
+          typeof saved.meta.accumulatedScanElapsedMs === 'number'
+            ? Math.max(0, saved.meta.accumulatedScanElapsedMs)
+            : scanCompleted
+            ? 0
+            : priorElapsedMs;
 
         if (!scanCompleted && saved.meta.pendingScanFolders) {
           scanState = {
@@ -613,7 +685,7 @@ export const exportAllDriveToZip = async (
     }
 
     if (!loadedSaved || !scanCompleted) {
-      onProgress?.({
+      emitProgress({
         phase: 'scanning',
         percent: Math.min(9, 2 + Math.floor(scannedFolders / 3)),
         currentItem:
@@ -626,8 +698,6 @@ export const exportAllDriveToZip = async (
         discoveredFolders,
         downloadedBytes: committedBytes,
         totalBytesExpected: 0,
-        startedAt,
-        scanStartedAt,
       });
 
       allDriveFiles = await scanDriveRecursivelyResumable(
@@ -643,7 +713,7 @@ export const exportAllDriveToZip = async (
         (scanInfo) => {
           scannedFolders = scanInfo.scannedFolders;
           discoveredFolders = scanInfo.discoveredFolders;
-          onProgress?.({
+          emitProgress({
             phase: 'scanning',
             percent: Math.min(10, 2 + Math.floor(scannedFolders / 3)),
             currentItem: scanInfo.currentFolder,
@@ -653,8 +723,6 @@ export const exportAllDriveToZip = async (
             discoveredFolders,
             downloadedBytes: committedBytes,
             totalBytesExpected: 0,
-            startedAt,
-            scanStartedAt,
           });
         },
         async () => {
@@ -717,7 +785,7 @@ export const exportAllDriveToZip = async (
         return Math.min(89, 10 + Math.round((processedItems / Math.max(1, totalItems)) * 79));
       };
 
-      onProgress?.({
+      emitProgress({
         phase: 'downloading',
         percent: calcDownloadPercent(committedBytes),
         currentItem: displayLabel,
@@ -727,8 +795,6 @@ export const exportAllDriveToZip = async (
         discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
         downloadedBytes: committedBytes,
         totalBytesExpected,
-        startedAt,
-        scanStartedAt,
         scanCompletedAt,
         downloadStartedAt,
         initialResumedBytes,
@@ -750,7 +816,7 @@ export const exportAllDriveToZip = async (
           const now = Date.now();
           if (now - lastUiUpdate >= 120) {
             lastUiUpdate = now;
-            onProgress?.({
+            emitProgress({
               phase: 'downloading',
               percent: calcDownloadPercent(committedBytes + inFlightBytes),
               currentItem: displayLabel,
@@ -760,8 +826,6 @@ export const exportAllDriveToZip = async (
               discoveredFolders: Math.max(discoveredFolders, uniqueFolders.size),
               downloadedBytes: committedBytes + inFlightBytes,
               totalBytesExpected,
-              startedAt,
-              scanStartedAt,
               scanCompletedAt,
               downloadStartedAt,
               initialResumedBytes,
@@ -788,12 +852,14 @@ export const exportAllDriveToZip = async (
           zipPath,
           byteSize: blob.size,
         });
-        checkpointMeta.updatedAt = Date.now();
+        const now = Date.now();
+        checkpointMeta.updatedAt = now;
         checkpointMeta.completedItems = completedItems;
         checkpointMeta.usedZipPathsLower = Array.from(usedZipPathsLower);
         checkpointMeta.uniqueFolders = Array.from(uniqueFolders);
         checkpointMeta.folderCount = Math.max(scannedFolders, uniqueFolders.size);
         checkpointMeta.downloadedBytes = committedBytes;
+        checkpointMeta.accumulatedElapsedMs = priorElapsedMs + Math.max(0, now - startedAt);
 
         await saveZipAllCheckpointFile(zipPath, blob, checkpointMeta);
         if (downloadedCount % 10 === 0) {
@@ -831,7 +897,7 @@ export const exportAllDriveToZip = async (
 
     const finalFolderCount = Math.max(1, uniqueFolders.size);
 
-    onProgress?.({
+    emitProgress({
       phase: 'compressing',
       percent: 90,
       currentItem: 'Gerando arquivo ZIP completo...',
@@ -841,8 +907,6 @@ export const exportAllDriveToZip = async (
       discoveredFolders: finalFolderCount,
       downloadedBytes,
       totalBytesExpected,
-      startedAt,
-      scanStartedAt,
       scanCompletedAt,
       downloadStartedAt,
       initialResumedBytes,
@@ -859,7 +923,7 @@ export const exportAllDriveToZip = async (
         if (signal?.aborted) {
           throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
         }
-        onProgress?.({
+        emitProgress({
           phase: 'compressing',
           percent: Math.min(98, 90 + Math.round((metadata.percent / 100) * 8)),
           currentItem: metadata.currentFile || 'Compactando pacote final...',
@@ -869,8 +933,6 @@ export const exportAllDriveToZip = async (
           discoveredFolders: finalFolderCount,
           downloadedBytes,
           totalBytesExpected,
-          startedAt,
-          scanStartedAt,
           scanCompletedAt,
           downloadStartedAt,
           initialResumedBytes,
@@ -883,9 +945,9 @@ export const exportAllDriveToZip = async (
       throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
     }
 
-    const zipName = `DriveSync_Tudo_${new Date().toISOString().slice(0, 10)}.zip`;
+    const zipName = buildFullDriveBackupZipName(userNameOrEmail);
 
-    onProgress?.({
+    emitProgress({
       phase: 'saving',
       percent: 99,
       currentItem: zipName,
@@ -895,8 +957,6 @@ export const exportAllDriveToZip = async (
       discoveredFolders: finalFolderCount,
       downloadedBytes,
       totalBytesExpected,
-      startedAt,
-      scanStartedAt,
       scanCompletedAt,
       downloadStartedAt,
       initialResumedBytes,
@@ -933,7 +993,7 @@ export const exportAllDriveToZip = async (
     // Delete temporary recovery files once full download completes cleanly
     await cleanupTempRecoveryFiles(targetDirHandle);
 
-    onProgress?.({
+    emitProgress({
       phase: 'saving',
       percent: 100,
       currentItem: 'Concluído!',
@@ -943,8 +1003,6 @@ export const exportAllDriveToZip = async (
       discoveredFolders: finalFolderCount,
       downloadedBytes,
       totalBytesExpected,
-      startedAt,
-      scanStartedAt,
       scanCompletedAt,
       downloadStartedAt,
       initialResumedBytes,
@@ -955,6 +1013,7 @@ export const exportAllDriveToZip = async (
       fileCount: downloadedCount,
       folderCount: finalFolderCount,
       totalBytes: zipBlob.size,
+      elapsedSeconds: Math.max(0, Math.round((priorElapsedMs + (Date.now() - startedAt)) / 1000)),
     };
   } catch (err: any) {
     await persistErrorRecoveryFiles(err);

@@ -146,11 +146,13 @@ export const DownloadSuccessModal: React.FC<DownloadSuccessModalProps> = ({
   };
 
   const formatElapsed = (sec: number): string => {
-    if (!sec || sec <= 0) return '< 1 segundo';
-    const mins = Math.floor(sec / 60);
-    const secs = sec % 60;
-    if (mins === 0) return `${secs}s`;
-    return `${mins}m ${secs}s`;
+    const safe = Math.max(0, Math.floor(sec || 0));
+    const hours = Math.floor(safe / 3600);
+    const mins = Math.floor((safe % 3600) / 60);
+    const secs = safe % 60;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs
+      .toString()
+      .padStart(2, '0')}`;
   };
 
   const computedAvgSpeed =

@@ -5,18 +5,17 @@ export const formatDurationClock = (totalSeconds: number): string => {
   const hours = Math.floor(safe / 3600);
   const mins = Math.floor((safe % 3600) / 60);
   const secs = safe % 60;
-  if (hours > 0) {
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs
-      .toString()
-      .padStart(2, '0')}`;
-  }
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs
+    .toString()
+    .padStart(2, '0')}`;
 };
 
 export const formatClockHHMM = (timestampMs: number): string => {
   return new Date(timestampMs).toLocaleTimeString('pt-BR', {
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
   });
 };
 
@@ -32,16 +31,20 @@ export const computeZipTimingMetrics = (
   fallbackStartMs: number,
   nowMs: number
 ): ZipTimingMetrics => {
-  const startedAt = progress.startedAt || fallbackStartMs || nowMs;
-  const elapsedSeconds = Math.max(0, Math.floor((nowMs - startedAt) / 1000));
-  const startClock = formatClockHHMM(startedAt);
+  const displayStartAt = progress.originalStartedAt || progress.startedAt || fallbackStartMs || nowMs;
+  const sessionAnchor = progress.startedAt || fallbackStartMs || nowMs;
+  const priorElapsedMs = progress.priorElapsedMs || 0;
+  const sessionElapsedMs = Math.max(0, nowMs - sessionAnchor);
+  const elapsedSeconds = Math.max(0, Math.floor((priorElapsedMs + sessionElapsedMs) / 1000));
+  const startClock = formatClockHHMM(displayStartAt);
   const elapsedFormatted = formatDurationClock(elapsedSeconds);
 
   // 1. Estimated / actual time for scanning folder structure
   let scanEstimateLabel = 'Calculando...';
+  const priorScanMs = progress.priorScanElapsedMs || 0;
   if (progress.phase === 'scanning') {
-    const scanStart = progress.scanStartedAt || startedAt;
-    const scanElapsed = Math.max(1, (nowMs - scanStart) / 1000);
+    const scanStart = progress.scanStartedAt || sessionAnchor;
+    const scanElapsed = Math.max(1, (priorScanMs + Math.max(0, nowMs - scanStart)) / 1000);
     const scanned = progress.folderCount || 0;
     const discovered = progress.discoveredFolders || scanned;
 
@@ -55,11 +58,18 @@ export const computeZipTimingMetrics = (
     } else {
       scanEstimateLabel = 'Mapeando...';
     }
-  } else if (progress.scanCompletedAt && progress.scanStartedAt) {
-    const scanTotalSec = Math.max(1, Math.round((progress.scanCompletedAt - progress.scanStartedAt) / 1000));
-    scanEstimateLabel = `Concluído (${formatDurationClock(scanTotalSec)})`;
   } else {
-    scanEstimateLabel = 'Restaurado';
+    const currentScanMs =
+      progress.scanCompletedAt && progress.scanStartedAt
+        ? Math.max(0, progress.scanCompletedAt - progress.scanStartedAt)
+        : 0;
+    const totalScanMs = priorScanMs + currentScanMs;
+    if (totalScanMs > 0) {
+      const scanTotalSec = Math.max(1, Math.round(totalScanMs / 1000));
+      scanEstimateLabel = `Concluído (${formatDurationClock(scanTotalSec)})`;
+    } else {
+      scanEstimateLabel = 'Restaurado';
+    }
   }
 
   // 2. Predicted completion time for full download
@@ -67,7 +77,7 @@ export const computeZipTimingMetrics = (
   if (progress.phase === 'scanning') {
     finishEstimateLabel = 'Aguardando pastas...';
   } else if (progress.phase === 'downloading') {
-    const dlStart = progress.downloadStartedAt || progress.scanCompletedAt || startedAt;
+    const dlStart = progress.downloadStartedAt || progress.scanCompletedAt || sessionAnchor;
     const dlElapsed = Math.max(1, (nowMs - dlStart) / 1000);
     const resumedBytes = progress.initialResumedBytes || 0;
     const resumedFiles = progress.initialResumedFiles || 0;
@@ -94,7 +104,7 @@ export const computeZipTimingMetrics = (
     }
   } else if (progress.phase === 'compressing') {
     const remainingPct = Math.max(1, 100 - progress.percent);
-    finishEstimateLabel = `Compactando (~${Math.max(2, Math.ceil(remainingPct * 0.8))}s)`;
+    finishEstimateLabel = `Compactando (~${formatDurationClock(Math.max(2, Math.ceil(remainingPct * 0.8)))})`;
   } else {
     finishEstimateLabel = 'Quase pronto...';
   }

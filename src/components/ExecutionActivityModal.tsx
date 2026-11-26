@@ -185,7 +185,12 @@ export const ExecutionActivityModal: React.FC<ExecutionActivityModalProps> = ({
                 syncState.recentLogs.map((log) => (
                   <div key={log.id} className="flex items-start space-x-2 border-b border-slate-800/50 pb-1">
                     <span className="text-slate-500 shrink-0">
-                      {new Date(log.timestamp).toLocaleTimeString()}
+                      {new Date(log.timestamp).toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                      })}
                     </span>
                     <span
                       className={`font-semibold shrink-0 ${
