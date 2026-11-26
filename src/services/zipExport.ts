@@ -34,6 +34,8 @@ export interface ZipExportStats {
   errorCount?: number;
   totalBytes: number;
   elapsedSeconds?: number;
+  scanElapsedSeconds?: number;
+  downloadElapsedSeconds?: number;
   startedAt?: number;
   endedAt?: number;
   peakSpeedBytes?: number;
@@ -225,6 +227,7 @@ export const exportSelectedFilesToZip = async (
   const scanStartedAt = startedAt;
   let scanCompletedAt: number | undefined;
   let downloadStartedAt: number | undefined;
+  let downloadCompletedAt: number | undefined;
   let scannedFolders = 0;
   let discoveredFolders = files.filter((f) => f.isFolder).length || 1;
 
@@ -467,6 +470,7 @@ export const exportSelectedFilesToZip = async (
 
   try {
     await Promise.all(Array.from({ length: workerCount }, (_, idx) => runWorker(idx)));
+    downloadCompletedAt = Date.now();
   } catch (err) {
     throw fatalError || err;
   } finally {
@@ -600,6 +604,14 @@ export const exportSelectedFilesToZip = async (
   const endedAt = Date.now();
   const elapsedSeconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
   const avgSpeed = zipBlob.size > 0 ? Math.round(zipBlob.size / Math.max(1, elapsedSeconds)) : 0;
+  const scanDurationSec =
+    scanCompletedAt && scanStartedAt
+      ? Math.max(0, Math.round((scanCompletedAt - scanStartedAt) / 1000))
+      : 0;
+  const downloadDurationSec =
+    downloadStartedAt && downloadCompletedAt
+      ? Math.max(0, Math.round((downloadCompletedAt - downloadStartedAt) / 1000))
+      : Math.max(0, elapsedSeconds - scanDurationSec);
 
   return {
     fileCount: zipEntryCounts.fileCount || downloadedCount,
@@ -610,6 +622,8 @@ export const exportSelectedFilesToZip = async (
     errorCount: zipErrorCount,
     totalBytes: zipBlob.size,
     elapsedSeconds,
+    scanElapsedSeconds: scanDurationSec,
+    downloadElapsedSeconds: downloadDurationSec,
     startedAt,
     endedAt,
     peakSpeedBytes: speedTracker.getPeak(avgSpeed),
@@ -655,6 +669,7 @@ export const exportAllDriveToZip = async (
   let priorScanElapsedMs = 0;
   let scanCompletedAt: number | undefined;
   let downloadStartedAt: number | undefined;
+  let downloadCompletedAt: number | undefined;
   let initialResumedBytes = 0;
   let initialResumedFiles = 0;
 
@@ -1160,6 +1175,7 @@ export const exportAllDriveToZip = async (
 
     try {
       await Promise.all(Array.from({ length: workerCount }, (_, idx) => runDriveWorker(idx)));
+      downloadCompletedAt = Date.now();
     } catch (err) {
       throw fatalError || err;
     } finally {
@@ -1311,6 +1327,14 @@ export const exportAllDriveToZip = async (
 
     const elapsedSeconds = Math.max(0, Math.round((priorElapsedMs + (endedAt - startedAt)) / 1000));
     const avgSpeed = zipBlob.size > 0 ? Math.round(zipBlob.size / Math.max(1, elapsedSeconds)) : 0;
+    const scanDurationSec = Math.max(
+      0,
+      Math.round((priorScanElapsedMs + ((scanCompletedAt || Date.now()) - scanStartedAt)) / 1000)
+    );
+    const downloadDurationSec =
+      downloadStartedAt && downloadCompletedAt
+        ? Math.max(0, Math.round((downloadCompletedAt - downloadStartedAt) / 1000))
+        : Math.max(0, elapsedSeconds - scanDurationSec);
 
     return {
       fileCount: zipEntryCounts.fileCount || downloadedCount,
@@ -1321,6 +1345,8 @@ export const exportAllDriveToZip = async (
       errorCount: zipErrorCount,
       totalBytes: zipBlob.size,
       elapsedSeconds,
+      scanElapsedSeconds: scanDurationSec,
+      downloadElapsedSeconds: downloadDurationSec,
       startedAt: checkpointCreatedAt,
       endedAt,
       peakSpeedBytes: speedTracker.getPeak(avgSpeed),

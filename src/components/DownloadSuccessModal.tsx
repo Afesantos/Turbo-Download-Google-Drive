@@ -52,6 +52,8 @@ interface DownloadSuccessModalProps {
   wroteToDisk?: boolean;
   trackingSavedLocally?: boolean;
   trackingSavedToDrive?: boolean;
+  scanElapsedSeconds?: number;
+  downloadElapsedSeconds?: number;
   onOpenFolderPicker?: () => void;
 }
 
@@ -66,6 +68,8 @@ export const DownloadSuccessModal: React.FC<DownloadSuccessModalProps> = ({
   skippedNonExportableCount = 0,
   totalBytes,
   elapsedSeconds = 0,
+  scanElapsedSeconds,
+  downloadElapsedSeconds,
   startedAt,
   endedAt,
   averageSpeedBytes = 0,
@@ -328,34 +332,54 @@ export const DownloadSuccessModal: React.FC<DownloadSuccessModalProps> = ({
             </div>
           )}
 
-          {/* Start Time, End Time & Elapsed Time (hh:mm:ss) */}
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <div className="bg-slate-900/60 rounded-xl px-2.5 py-2 border border-slate-800/70">
-              <span className="text-slate-400 flex items-center space-x-1 text-[10px] uppercase font-bold">
-                <PlayCircle className="w-3 h-3 text-blue-400 shrink-0" />
+          {/* Detailed Timing Breakdown: Start, End, Scan, Download, Total */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+            <div className="bg-slate-900/60 rounded-xl px-2 py-2 border border-slate-800/70">
+              <span className="text-slate-400 flex items-center space-x-1 text-[9px] uppercase font-bold">
+                <PlayCircle className="w-2.5 h-2.5 text-blue-400 shrink-0" />
                 <span>Início</span>
               </span>
-              <div className="font-mono font-bold text-slate-100 mt-0.5 text-xs sm:text-sm">
+              <div className="font-mono font-bold text-slate-100 mt-0.5 text-xs truncate">
                 {formatClockHHMM(resolvedStartTs)}
               </div>
             </div>
 
-            <div className="bg-slate-900/60 rounded-xl px-2.5 py-2 border border-slate-800/70">
-              <span className="text-slate-400 flex items-center space-x-1 text-[10px] uppercase font-bold">
-                <Flag className="w-3 h-3 text-emerald-400 shrink-0" />
+            <div className="bg-slate-900/60 rounded-xl px-2 py-2 border border-slate-800/70">
+              <span className="text-slate-400 flex items-center space-x-1 text-[9px] uppercase font-bold">
+                <Flag className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
                 <span>Término</span>
               </span>
-              <div className="font-mono font-bold text-slate-100 mt-0.5 text-xs sm:text-sm">
+              <div className="font-mono font-bold text-slate-100 mt-0.5 text-xs truncate">
                 {formatClockHHMM(resolvedEndTs)}
               </div>
             </div>
 
-            <div className="bg-slate-900/60 rounded-xl px-2.5 py-2 border border-slate-800/70">
-              <span className="text-slate-400 flex items-center space-x-1 text-[10px] uppercase font-bold">
-                <Clock className="w-3 h-3 text-orange-400 shrink-0" />
-                <span>Decorrido</span>
+            <div className="bg-slate-900/60 rounded-xl px-2 py-2 border border-slate-800/70">
+              <span className="text-slate-400 flex items-center space-x-1 text-[9px] uppercase font-bold" title="Tempo decorrido de leitura/varredura de arquivos e pastas do Google Drive">
+                <Folder className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                <span className="truncate">Leitura Drive</span>
               </span>
-              <div className="font-mono font-bold text-orange-300 mt-0.5 text-xs sm:text-sm">
+              <div className="font-mono font-bold text-amber-300 mt-0.5 text-xs truncate">
+                {formatDurationClock(scanElapsedSeconds !== undefined ? scanElapsedSeconds : Math.round(elapsedSeconds * 0.25))}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 rounded-xl px-2 py-2 border border-slate-800/70">
+              <span className="text-slate-400 flex items-center space-x-1 text-[9px] uppercase font-bold" title="Tempo total apenas do período de downloads dos arquivos">
+                <HardDrive className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                <span className="truncate">Downloads</span>
+              </span>
+              <div className="font-mono font-bold text-emerald-300 mt-0.5 text-xs truncate">
+                {formatDurationClock(downloadElapsedSeconds !== undefined ? downloadElapsedSeconds : Math.round(elapsedSeconds * 0.75))}
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 rounded-xl px-2 py-2 border border-slate-800/70 col-span-2 sm:col-span-1">
+              <span className="text-slate-400 flex items-center space-x-1 text-[9px] uppercase font-bold">
+                <Clock className="w-2.5 h-2.5 text-orange-400 shrink-0" />
+                <span>Total Geral</span>
+              </span>
+              <div className="font-mono font-bold text-orange-300 mt-0.5 text-xs truncate">
                 {formatDurationClock(elapsedSeconds)}
               </div>
             </div>

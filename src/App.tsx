@@ -289,6 +289,8 @@ export default function App() {
     skippedNonExportableCount?: number;
     bytes: number;
     elapsedSeconds: number;
+    scanElapsedSeconds?: number;
+    downloadElapsedSeconds?: number;
     startedAt?: number;
     endedAt?: number;
     averageSpeedBytes: number;
@@ -304,6 +306,8 @@ export default function App() {
     folderCount: 0,
     bytes: 0,
     elapsedSeconds: 0,
+    scanElapsedSeconds: 0,
+    downloadElapsedSeconds: 0,
     averageSpeedBytes: 0,
     peakSpeedBytes: 0,
     isZip: false,
@@ -1253,6 +1257,8 @@ export default function App() {
         skippedNonExportableCount: zipStats.skippedNonExportableCount || 0,
         bytes: zipStats.totalBytes,
         elapsedSeconds: elapsed,
+        scanElapsedSeconds: zipStats.scanElapsedSeconds,
+        downloadElapsedSeconds: zipStats.downloadElapsedSeconds,
         startedAt: zipStats.startedAt || startTime,
         endedAt,
         averageSpeedBytes: avgSpeed,
@@ -1385,6 +1391,8 @@ export default function App() {
         skippedNonExportableCount: zipStats.skippedNonExportableCount || 0,
         bytes: zipStats.totalBytes,
         elapsedSeconds: elapsed,
+        scanElapsedSeconds: zipStats.scanElapsedSeconds,
+        downloadElapsedSeconds: zipStats.downloadElapsedSeconds,
         startedAt: zipStats.startedAt || startTime,
         endedAt,
         averageSpeedBytes: avgSpeed,
@@ -1884,6 +1892,8 @@ export default function App() {
         skippedNonExportableCount={downloadStats.skippedNonExportableCount}
         totalBytes={downloadStats.bytes}
         elapsedSeconds={downloadStats.elapsedSeconds}
+        scanElapsedSeconds={downloadStats.scanElapsedSeconds}
+        downloadElapsedSeconds={downloadStats.downloadElapsedSeconds}
         startedAt={downloadStats.startedAt}
         endedAt={downloadStats.endedAt}
         averageSpeedBytes={downloadStats.averageSpeedBytes}
