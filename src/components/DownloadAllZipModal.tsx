@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   ShieldAlert,
@@ -12,10 +12,20 @@ import {
   Square,
   RotateCcw,
   Play,
+  Timer,
+  Upload,
 } from 'lucide-react';
 import { ZipAllProgress } from '../services/zipExport';
-import { ZipAllCheckpointSummary } from '../services/zipCheckpoint';
+import { TEMP_RECOVERY_MANIFEST_NAME, ZipAllCheckpointSummary } from '../services/zipCheckpoint';
 import { formatBytes, formatDateTime } from '../utils/formatters';
+import { computeZipTimingMetrics } from '../utils/zipTiming';
+
+export interface ErrorRecoveryInfo {
+  message: string;
+  fileName: string;
+  savedToDisk: boolean;
+  downloaded: boolean;
+}
 
 interface DownloadAllZipModalProps {
   isOpen: boolean;
@@ -23,6 +33,7 @@ interface DownloadAllZipModalProps {
   isCancelling: boolean;
   isAuthExpired?: boolean;
   isRenewingAuth?: boolean;
+  errorRecoveryInfo?: ErrorRecoveryInfo | null;
   progress: ZipAllProgress;
   savedCheckpoint: ZipAllCheckpointSummary | null;
   localFolderName: string | null;
@@ -30,6 +41,7 @@ interface DownloadAllZipModalProps {
   onResumeCheckpoint: () => void;
   onDenyResumeAndStartFresh: () => void;
   onRenewAuthAndResume?: () => void;
+  onImportRecoveryFile?: (file: File) => void;
   onCancel: () => void;
 }
 
@@ -40,18 +52,13 @@ const PHASE_LABELS: Record<ZipAllProgress['phase'], string> = {
   saving: 'Salvando Arquivo .ZIP',
 };
 
-const formatDuration = (totalSeconds: number): string => {
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-};
-
 export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   isOpen,
   isProcessing,
   isCancelling,
   isAuthExpired = false,
   isRenewingAuth = false,
+  errorRecoveryInfo = null,
   progress,
   savedCheckpoint,
   localFolderName,
@@ -59,19 +66,23 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   onResumeCheckpoint,
   onDenyResumeAndStartFresh,
   onRenewAuthAndResume,
+  onImportRecoveryFile,
   onCancel,
 }) => {
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const startTimeRef = useRef<number>(Date.now());
+  const recoveryFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     if (!isOpen || !isProcessing) {
-      setElapsedSeconds(0);
       return;
     }
 
-    const startTime = Date.now();
+    const now = Date.now();
+    startTimeRef.current = now;
+    setNowMs(now);
     const timer = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      setNowMs(Date.now());
     }, 1000);
 
     return () => window.clearInterval(timer);
@@ -79,7 +90,17 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isResumePrompt = !isProcessing && !isAuthExpired && savedCheckpoint !== null;
+  const isErrorState = !isProcessing && !isAuthExpired && errorRecoveryInfo !== null;
+  const isResumePrompt = !isProcessing && !isAuthExpired && !isErrorState && savedCheckpoint !== null;
+  const timing = computeZipTimingMetrics(progress, startTimeRef.current, nowMs);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && onImportRecoveryFile) {
+      onImportRecoveryFile(file);
+    }
+    e.target.value = '';
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
@@ -87,18 +108,26 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
         className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 transition-all my-auto ${
           isProcessing
             ? 'max-w-xl border-emerald-500/45 ring-4 ring-emerald-500/15'
-            : isAuthExpired
+            : isAuthExpired || isErrorState
             ? 'max-w-lg border-rose-500/45 ring-4 ring-rose-500/15'
             : isResumePrompt
             ? 'max-w-lg border-blue-500/45 ring-4 ring-blue-500/15'
             : 'max-w-md border-amber-500/40 ring-4 ring-amber-500/10'
         }`}
       >
+        <input
+          ref={recoveryFileInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
         <div
           className={`absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none ${
             isProcessing
               ? 'bg-emerald-500/15'
-              : isAuthExpired
+              : isAuthExpired || isErrorState
               ? 'bg-rose-500/15'
               : isResumePrompt
               ? 'bg-blue-500/15'
@@ -158,10 +187,13 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               <div className="text-right shrink-0">
                 <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-end space-x-1">
                   <Clock className="w-3 h-3" />
-                  <span>Tempo</span>
+                  <span>Decorrido</span>
                 </div>
-                <div className="text-lg font-extrabold font-mono text-emerald-400">
-                  {formatDuration(elapsedSeconds)}
+                <div className="text-lg font-extrabold font-mono text-emerald-400 leading-tight">
+                  {timing.elapsedFormatted}
+                </div>
+                <div className="text-[10px] font-mono text-slate-400">
+                  Início: <strong className="text-slate-200">{timing.startClock}</strong>
                 </div>
               </div>
             </div>
@@ -207,8 +239,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             </div>
 
             {/* Live Counters Grid */}
-            <div className="grid grid-cols-3 gap-2.5 mb-4">
-              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+            <div className="grid grid-cols-3 gap-2.5 mb-2.5">
+              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
                 <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                   <FileText className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Arquivos</span>
@@ -220,7 +252,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 </div>
               </div>
 
-              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
                 <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                   <Folder className="w-3.5 h-3.5 text-amber-400" />
                   <span>Pastas</span>
@@ -230,7 +262,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 </div>
               </div>
 
-              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+              <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
                 <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                   <Archive className="w-3.5 h-3.5 text-blue-400" />
                   <span>Volume</span>
@@ -241,8 +273,27 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               </div>
             </div>
 
+            {/* Timing & ETA Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+              <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 flex items-center space-x-1.5">
+                  <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Info das pastas:</span>
+                </span>
+                <span className="font-mono font-bold text-slate-200">{timing.scanEstimateLabel}</span>
+              </div>
+
+              <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 flex items-center space-x-1.5">
+                  <Timer className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Término previsto:</span>
+                </span>
+                <span className="font-mono font-bold text-emerald-300">{timing.finishEstimateLabel}</span>
+              </div>
+            </div>
+
             {/* Current Item */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-5 flex items-center space-x-2.5 text-xs">
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-4 flex items-center space-x-2.5 text-xs">
               <RefreshCw className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
               <div className="min-w-0 flex-1">
                 <span className="text-[10px] text-slate-500 uppercase font-bold block">
@@ -292,8 +343,9 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   <p className="leading-relaxed">
                     O token de segurança OAuth 2 do Google Drive expira automaticamente após cerca
-                    de <strong>1 hora</strong> de uso. Renove o acesso com 1 clique para continuar
-                    exatamente de onde parou sem perder arquivos já baixados.
+                    de <strong>1 hora</strong> de uso. O conteúdo capturado foi salvo no arquivo
+                    temporário <strong className="font-mono">{TEMP_RECOVERY_MANIFEST_NAME}</strong>{' '}
+                    para retomada (ele será removido ao concluir).
                   </p>
                 </div>
 
@@ -348,6 +400,84 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
               )}
             </div>
           </div>
+        ) : isErrorState && errorRecoveryInfo ? (
+          /* Step 1D: Non-401 Error with Captured Content Saved in Temp Recovery File */
+          <div className="relative z-10">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-14 h-14 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shadow-lg shadow-rose-500/20 mb-4">
+                <ShieldAlert className="w-7 h-7" />
+              </div>
+
+              <h3 className="font-extrabold text-lg text-white tracking-tight">
+                Erro Durante o Download — Progresso Salvo
+              </h3>
+
+              <div className="mt-3 space-y-3 text-left w-full">
+                <div className="bg-rose-950/40 border border-rose-800/70 rounded-2xl p-3.5 text-xs text-rose-100 space-y-1.5">
+                  <p className="font-semibold text-rose-200">{errorRecoveryInfo.message}</p>
+                  <p className="text-rose-200/85 leading-relaxed">
+                    O conteúdo capturado até o momento foi registrado no arquivo temporário{' '}
+                    <strong className="font-mono text-white">{errorRecoveryInfo.fileName}</strong>
+                    {errorRecoveryInfo.savedToDisk
+                      ? ' (salvo na pasta de destino).'
+                      : errorRecoveryInfo.downloaded
+                      ? ' (baixado para sua pasta Downloads).'
+                      : ' (salvo no armazenamento do navegador).'}{' '}
+                    Ao finalizar a retomada com sucesso, esse arquivo temporário será deletado automaticamente.
+                  </p>
+                </div>
+
+                {savedCheckpoint && (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        Arquivos Capturados
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-white mt-0.5 block">
+                        {savedCheckpoint.completedFiles} / {savedCheckpoint.totalFiles}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                        Volume Capturado
+                      </span>
+                      <span className="text-sm font-extrabold font-mono text-emerald-400 mt-0.5 block">
+                        {formatBytes(savedCheckpoint.downloadedBytes)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                onClick={onCancel}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all"
+              >
+                Retomar Depois
+              </button>
+
+              {savedCheckpoint ? (
+                <button
+                  onClick={onResumeCheckpoint}
+                  className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Retomar de Onde Parou</span>
+                </button>
+              ) : (
+                <button
+                  onClick={onConfirmFresh}
+                  className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-amber-600/25 active:scale-95 transition-all"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Tentar Novamente</span>
+                </button>
+              )}
+            </div>
+          </div>
         ) : isResumePrompt && savedCheckpoint ? (
           /* Step 1B: Authorization to Resume from Saved Checkpoint */
           <div className="relative z-10">
@@ -366,7 +496,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   <p className="leading-relaxed">
                     Encontramos um progresso anterior salvo na memória. Deseja{' '}
                     <strong>autorizar a continuação</strong> exatamente de onde parou? Caso negue,
-                    o processo será descartado e começará tudo do zero.
+                    o processo será descartado e começará tudo do zero. Ao finalizar, o arquivo
+                    temporário será removido automaticamente.
                   </p>
                 </div>
 
@@ -452,6 +583,17 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                     </strong>
                   </span>
                 </div>
+
+                {onImportRecoveryFile && (
+                  <button
+                    type="button"
+                    onClick={() => recoveryFileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center space-x-1.5 text-[11px] font-semibold text-blue-300 hover:text-blue-200 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-800/60 rounded-xl px-3 py-2 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span>Carregar arquivo de retomada ({TEMP_RECOVERY_MANIFEST_NAME})</span>
+                  </button>
+                )}
               </div>
             </div>
 

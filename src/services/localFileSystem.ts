@@ -268,7 +268,7 @@ export const writeStreamToLocalFile = async (
   }
 };
 
-// Direct buffer write
+// Direct buffer write (creates unique filename if already exists)
 export const writeBufferToLocalFile = async (
   targetDirHandle: FileSystemDirectoryHandle,
   pathSegments: string[],
@@ -280,6 +280,81 @@ export const writeBufferToLocalFile = async (
   const writable = await fileHandle.createWritable({ keepExistingData: false });
   await (writable as any).write(data);
   await writable.close();
+};
+
+// Overwrite/create an exact-name temporary file directly in targetDirHandle
+export const writeFixedLocalFile = async (
+  targetDirHandle: FileSystemDirectoryHandle,
+  fileName: string,
+  data: string | Uint8Array | ArrayBuffer | Blob
+): Promise<boolean> => {
+  try {
+    const fileHandle = await targetDirHandle.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable({ keepExistingData: false });
+    await (writable as any).write(data);
+    await writable.close();
+    return true;
+  } catch (err) {
+    console.warn(`Não foi possível gravar arquivo temporário "${fileName}":`, err);
+    return false;
+  }
+};
+
+// Read a file from targetDirHandle if it exists
+export const readLocalFileIfExists = async (
+  targetDirHandle: FileSystemDirectoryHandle,
+  fileName: string
+): Promise<File | null> => {
+  try {
+    const fileHandle = await targetDirHandle.getFileHandle(fileName, { create: false });
+    return await fileHandle.getFile();
+  } catch {
+    return null;
+  }
+};
+
+// Delete a temporary file from targetDirHandle if it exists
+export const deleteLocalFileIfExists = async (
+  targetDirHandle: FileSystemDirectoryHandle,
+  fileName: string
+): Promise<void> => {
+  try {
+    await targetDirHandle.removeEntry(fileName);
+  } catch {
+    // Ignore if file doesn't exist or permission is unavailable
+  }
+};
+
+// Browser-private OPFS temporary file helpers (when no physical folder handle is linked)
+export const writeOpfsTempFile = async (
+  fileName: string,
+  data: string | Blob
+): Promise<boolean> => {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+      return false;
+    }
+    const root = await navigator.storage.getDirectory();
+    const fileHandle = await root.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable({ keepExistingData: false });
+    await (writable as any).write(data);
+    await writable.close();
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const deleteOpfsTempFile = async (fileName: string): Promise<void> => {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+      return;
+    }
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(fileName);
+  } catch {
+    // ignore if missing
+  }
 };
 
 // Fallback browser download (when File System Access API is not active or user prefers manual download)

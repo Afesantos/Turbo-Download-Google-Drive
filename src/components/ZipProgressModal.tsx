@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   HardDrive,
@@ -7,9 +7,11 @@ import {
   FileText,
   Clock,
   Square,
+  Timer,
 } from 'lucide-react';
 import { ZipAllProgress } from '../services/zipExport';
 import { formatBytes } from '../utils/formatters';
+import { computeZipTimingMetrics } from '../utils/zipTiming';
 
 interface ZipProgressModalProps {
   isOpen: boolean;
@@ -27,12 +29,6 @@ const PHASE_LABELS: Record<ZipAllProgress['phase'], string> = {
   saving: 'Salvando Arquivo .ZIP',
 };
 
-const formatDuration = (totalSeconds: number): string => {
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-};
-
 export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
   isOpen,
   isCancelling,
@@ -41,23 +37,27 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
   selectedCount,
   onCancel,
 }) => {
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const startTimeRef = useRef<number>(Date.now());
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     if (!isOpen) {
-      setElapsedSeconds(0);
       return;
     }
 
-    const startTime = Date.now();
+    const now = Date.now();
+    startTimeRef.current = now;
+    setNowMs(now);
     const timer = window.setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
+      setNowMs(Date.now());
     }, 1000);
 
     return () => window.clearInterval(timer);
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const timing = computeZipTimingMetrics(progress, startTimeRef.current, nowMs);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
@@ -67,7 +67,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
 
         <div className="relative z-10">
           {/* Header */}
-          <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
             <div className="flex items-center space-x-3 min-w-0 flex-1">
               <div className="relative shrink-0">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/30">
@@ -102,17 +102,20 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
             <div className="text-right shrink-0">
               <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center justify-end space-x-1">
                 <Clock className="w-3 h-3" />
-                <span>Tempo</span>
+                <span>Decorrido</span>
               </div>
-              <div className="text-lg font-extrabold font-mono text-amber-400">
-                {formatDuration(elapsedSeconds)}
+              <div className="text-lg font-extrabold font-mono text-amber-400 leading-tight">
+                {timing.elapsedFormatted}
+              </div>
+              <div className="text-[10px] font-mono text-slate-400">
+                Início: <strong className="text-slate-200">{timing.startClock}</strong>
               </div>
             </div>
           </div>
 
           {/* Centered Spinning Circular Indicator */}
-          <div className="flex flex-col items-center justify-center my-4">
-            <div className="relative w-24 h-24 flex items-center justify-center">
+          <div className="flex flex-col items-center justify-center my-3">
+            <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center">
               <div className="absolute inset-0 rounded-full bg-amber-500/15 blur-md" />
               <div className="absolute inset-0 rounded-full border-4 border-slate-800" />
               <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-amber-400 border-r-orange-400 animate-spin" />
@@ -129,7 +132,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
           </div>
 
           {/* Progress Bar */}
-          <div className="space-y-2 mb-5">
+          <div className="space-y-2 mb-4">
             <div className="flex items-center justify-between text-xs font-semibold">
               <span className="text-slate-300 flex items-center space-x-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
@@ -151,8 +154,8 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
           </div>
 
           {/* Live Counters Grid */}
-          <div className="grid grid-cols-3 gap-2.5 mb-4">
-            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+          <div className="grid grid-cols-3 gap-2.5 mb-2.5">
+            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
               <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                 <FileText className="w-3.5 h-3.5 text-amber-400" />
                 <span>Arquivos</span>
@@ -164,7 +167,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
               </div>
             </div>
 
-            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
               <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                 <Folder className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Pastas</span>
@@ -174,7 +177,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
               </div>
             </div>
 
-            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-3">
+            <div className="bg-slate-950/75 border border-slate-800 rounded-2xl p-2.5 sm:p-3">
               <div className="flex items-center space-x-1.5 text-[10px] uppercase font-bold text-slate-400">
                 <Archive className="w-3.5 h-3.5 text-blue-400" />
                 <span>Volume</span>
@@ -185,8 +188,27 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
             </div>
           </div>
 
+          {/* Timing & ETA Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5">
+                <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Info das pastas:</span>
+              </span>
+              <span className="font-mono font-bold text-slate-200">{timing.scanEstimateLabel}</span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl px-3 py-2 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400 flex items-center space-x-1.5">
+                <Timer className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>Término previsto:</span>
+              </span>
+              <span className="font-mono font-bold text-amber-300">{timing.finishEstimateLabel}</span>
+            </div>
+          </div>
+
           {/* Current Item */}
-          <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-6 flex items-center space-x-2.5 text-xs">
+          <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-5 flex items-center space-x-2.5 text-xs">
             <RefreshCw className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
             <div className="min-w-0 flex-1">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">

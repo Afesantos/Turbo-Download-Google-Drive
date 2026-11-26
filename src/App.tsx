@@ -45,13 +45,14 @@ import {
 } from './services/syncEngine';
 import { exportSelectedFilesToZip, exportAllDriveToZip, ZipAllProgress } from './services/zipExport';
 import {
-  clearZipAllCheckpoint,
+  cleanupTempRecoveryFiles,
   getZipAllCheckpointSummary,
+  importRecoveryManifestFromFile,
   ZipAllCheckpointSummary,
 } from './services/zipCheckpoint';
 import { generateUserGuidePDF } from './services/pdfGenerator';
 import { ExecutionActivityModal } from './components/ExecutionActivityModal';
-import { DownloadAllZipModal } from './components/DownloadAllZipModal';
+import { DownloadAllZipModal, ErrorRecoveryInfo } from './components/DownloadAllZipModal';
 import { ZipProgressModal } from './components/ZipProgressModal';
 
 import { Header } from './components/Header';
@@ -144,6 +145,7 @@ export default function App() {
   const [isCancellingDownloadAll, setIsCancellingDownloadAll] = useState<boolean>(false);
   const [isDownloadAllAuthExpired, setIsDownloadAllAuthExpired] = useState<boolean>(false);
   const [isRenewingDownloadAllAuth, setIsRenewingDownloadAllAuth] = useState<boolean>(false);
+  const [downloadAllErrorRecovery, setDownloadAllErrorRecovery] = useState<ErrorRecoveryInfo | null>(null);
   const [savedZipCheckpoint, setSavedZipCheckpoint] = useState<ZipAllCheckpointSummary | null>(null);
   const [downloadAllProgress, setDownloadAllProgress] = useState<ZipAllProgress>({
     phase: 'scanning',
@@ -907,6 +909,7 @@ export default function App() {
     setIsCancellingDownloadAll(false);
     setIsDownloadAllAuthExpired(false);
     setIsRenewingDownloadAllAuth(false);
+    setDownloadAllErrorRecovery(null);
     setDownloadAllProgress({
       phase: 'scanning',
       percent: 0,
@@ -929,6 +932,7 @@ export default function App() {
     downloadAllAbortRef.current = controller;
     setIsCancellingDownloadAll(false);
     setIsDownloadAllAuthExpired(false);
+    setDownloadAllErrorRecovery(null);
     setSavedZipCheckpoint(null);
     setIsDownloadingAllZip(true);
     const startTime = Date.now();
@@ -971,6 +975,7 @@ export default function App() {
       } else if (err?.status === 401) {
         const checkpoint = await getZipAllCheckpointSummary();
         setSavedZipCheckpoint(checkpoint);
+        setDownloadAllErrorRecovery(null);
         setCachedAccessToken(null);
         setIsDownloadAllAuthExpired(true);
         setIsDownloadAllModalOpen(true);
@@ -980,8 +985,19 @@ export default function App() {
         );
       } else {
         console.error('Erro ao baixar todo o Drive em ZIP:', err);
-        showToast(err?.message || 'Falha ao gerar o ZIP completo do Drive.', 'error');
-        setIsDownloadAllModalOpen(false);
+        const checkpoint = await getZipAllCheckpointSummary();
+        setSavedZipCheckpoint(checkpoint);
+        setDownloadAllErrorRecovery({
+          message: err?.message || 'Falha ao gerar o ZIP completo do Drive.',
+          fileName: err?.recoveryFileName || 'DriveSync_Retomada_Temp.json',
+          savedToDisk: Boolean(err?.recoverySavedToDisk),
+          downloaded: Boolean(err?.recoveryDownloaded),
+        });
+        setIsDownloadAllModalOpen(true);
+        showToast(
+          'Erro durante o download. O conteúdo capturado foi salvo no arquivo temporário de retomada.',
+          'error'
+        );
       }
     } finally {
       setIsDownloadingAllZip(false);
@@ -1017,9 +1033,24 @@ export default function App() {
       if (!refreshed) return;
       activeToken = refreshed;
     }
-    await clearZipAllCheckpoint();
+    await cleanupTempRecoveryFiles(localDirHandle);
+    setDownloadAllErrorRecovery(null);
     setSavedZipCheckpoint(null);
     void runDownloadAllZip(false, activeToken || undefined);
+  };
+
+  const handleImportRecoveryFile = async (file: File) => {
+    try {
+      const checkpoint = await importRecoveryManifestFromFile(file, localDirHandle);
+      setDownloadAllErrorRecovery(null);
+      setSavedZipCheckpoint(checkpoint);
+      showToast(
+        'Arquivo temporário de retomada carregado! Clique em "Retomar de Onde Parou".',
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Não foi possível ler o arquivo de retomada.', 'error');
+    }
   };
 
   const handleRenewDownloadAllAuth = async () => {
@@ -1029,6 +1060,7 @@ export default function App() {
       if (!refreshed) return;
       const checkpoint = await getZipAllCheckpointSummary();
       setIsDownloadAllAuthExpired(false);
+      setDownloadAllErrorRecovery(null);
       void runDownloadAllZip(checkpoint !== null, refreshed);
     } finally {
       setIsRenewingDownloadAllAuth(false);
@@ -1041,6 +1073,7 @@ export default function App() {
       downloadAllAbortRef.current.abort();
     } else {
       setIsDownloadAllAuthExpired(false);
+      setDownloadAllErrorRecovery(null);
       setIsDownloadAllModalOpen(false);
     }
   };
@@ -1337,6 +1370,7 @@ export default function App() {
         isCancelling={isCancellingDownloadAll}
         isAuthExpired={isDownloadAllAuthExpired}
         isRenewingAuth={isRenewingDownloadAllAuth}
+        errorRecoveryInfo={downloadAllErrorRecovery}
         progress={downloadAllProgress}
         savedCheckpoint={savedZipCheckpoint}
         localFolderName={localFolderName}
@@ -1344,6 +1378,7 @@ export default function App() {
         onResumeCheckpoint={handleResumeDownloadAllZip}
         onDenyResumeAndStartFresh={handleDenyResumeAndStartFresh}
         onRenewAuthAndResume={handleRenewDownloadAllAuth}
+        onImportRecoveryFile={handleImportRecoveryFile}
         onCancel={handleCancelDownloadAllZip}
       />
       {/* Selected Items ZIP Progress Tracking Modal */}

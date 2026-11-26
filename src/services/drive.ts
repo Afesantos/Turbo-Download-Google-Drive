@@ -206,13 +206,24 @@ export interface FileWithPath {
   pathSegments: string[];
 }
 
+export interface RecursiveScanProgress {
+  scannedFolders: number;
+  discoveredFolders: number;
+  currentFolder: string;
+}
+
 export const listAllFilesRecursively = async (
   accessToken: string,
   folderId: string,
   currentPath: string[] = [],
   visitedFolderIds: Set<string> = new Set(),
   onFolderVisited?: (pathSegments: string[]) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onScanProgress?: (info: RecursiveScanProgress) => void,
+  scanTracker: { scannedFolders: number; discoveredFolders: number } = {
+    scannedFolders: 0,
+    discoveredFolders: 1,
+  }
 ): Promise<FileWithPath[]> => {
   if (signal?.aborted) {
     throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
@@ -226,6 +237,17 @@ export const listAllFilesRecursively = async (
 
   const result: FileWithPath[] = [];
   const resp = await listDriveFiles(accessToken, folderId, '', undefined, 1000, signal);
+
+  const childFolders = resp.files.filter((item) => item.isFolder && !visitedFolderIds.has(item.id));
+  scanTracker.discoveredFolders += childFolders.length;
+  scanTracker.scannedFolders += 1;
+
+  onScanProgress?.({
+    scannedFolders: scanTracker.scannedFolders,
+    discoveredFolders: scanTracker.discoveredFolders,
+    currentFolder: currentPath.join(' / ') || 'Meu Drive',
+  });
+
   for (const item of resp.files) {
     if (signal?.aborted) {
       throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
@@ -237,7 +259,9 @@ export const listAllFilesRecursively = async (
         [...currentPath, item.name],
         visitedFolderIds,
         onFolderVisited,
-        signal
+        signal,
+        onScanProgress,
+        scanTracker
       );
       result.push(...subFiles);
     } else if (!NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
