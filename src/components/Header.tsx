@@ -1,5 +1,17 @@
 import React from 'react';
-import { Zap, HardDrive, Cloud, LogOut, CheckCircle2, AlertCircle, RefreshCw, FileText, Activity } from 'lucide-react';
+import {
+  Zap,
+  HardDrive,
+  Cloud,
+  LogOut,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  FileText,
+  Activity,
+  Bell,
+  ShieldCheck,
+} from 'lucide-react';
 import { User } from 'firebase/auth';
 import { formatSpeed } from '../utils/formatters';
 
@@ -15,6 +27,8 @@ interface HeaderProps {
   isAutoSyncActive: boolean;
   onDownloadPDF?: () => void;
   onOpenExecutionModal?: () => void;
+  onEnableNotifications?: () => void;
+  notificationPerm?: NotificationPermission;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -29,6 +43,8 @@ export const Header: React.FC<HeaderProps> = ({
   isAutoSyncActive,
   onDownloadPDF,
   onOpenExecutionModal,
+  onEnableNotifications,
+  notificationPerm,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 text-white">
@@ -120,10 +136,42 @@ export const Header: React.FC<HeaderProps> = ({
                 {localFolderName ? localFolderName : 'Pasta Pendente'}
               </span>
             </div>
+
+            {/* Background execution guard indicator */}
+            <div
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border bg-slate-950/50 text-slate-300 border-slate-800 text-xs"
+              title="Proteção de 2º Plano Ativa: Web Workers e Web Locks garantem que seus downloads e sincronização continuam funcionando mesmo se outras abas do navegador estiverem ativas."
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden 2xl:inline">2º Plano:</span>
+              <span className="text-emerald-400 font-semibold">Ativo</span>
+            </div>
           </div>
 
-          {/* User Sign In / Profile */}
+          {/* User Sign In / Profile & Controls */}
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+            {/* Background Notification Toggle */}
+            {onEnableNotifications && typeof window !== 'undefined' && 'Notification' in window && (
+              <button
+                onClick={onEnableNotifications}
+                title={
+                  notificationPerm === 'granted'
+                    ? 'Notificações em 2º plano ativas (avisa quando downloads terminam)'
+                    : 'Ativar avisos de conclusão quando estiver em outras abas'
+                }
+                className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                  notificationPerm === 'granted'
+                    ? 'bg-emerald-950/50 text-emerald-300 border-emerald-800/60 shadow-sm'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                }`}
+              >
+                <Bell className={`w-3.5 h-3.5 ${notificationPerm === 'granted' ? 'text-emerald-400' : 'text-slate-400'}`} />
+                <span className="hidden sm:inline">
+                  {notificationPerm === 'granted' ? 'Avisos Ativos' : 'Avisar ao Concluir'}
+                </span>
+              </button>
+            )}
+
             {/* Execution Activity Button */}
             {onOpenExecutionModal && (
               <button

@@ -7,6 +7,7 @@
 
 import { DriveFile, getDriveFileMeta, listAllFilesRecursively } from './drive';
 import { downloadManager } from './downloadManager';
+import { workerSetInterval, workerClearInterval } from '../utils/workerTimer';
 
 export interface WatchedItem {
   id: string;
@@ -54,7 +55,7 @@ class SyncEngine {
   private isChecking: boolean = false;
   private intervalSeconds: number = 10; // Default 10s real-time check
   private lastCheckTimestamp: number | null = null;
-  private pollTimer: any = null;
+  private pollTimer: number | null = null;
   private listeners: Set<SyncStateListener> = new Set();
   private accessToken: string | null = null;
   private onAuthExpiredCallback: (() => void) | null = null;
@@ -62,6 +63,24 @@ class SyncEngine {
   constructor() {
     this.loadStateFromStorage();
     this.startPollingLoop();
+
+    // Catch up immediately if returning to foreground and interval elapsed while in background
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (
+          document.visibilityState === 'visible' &&
+          this.isActive &&
+          this.accessToken &&
+          this.watchedItems.size > 0 &&
+          !this.isChecking
+        ) {
+          const now = Date.now();
+          if (!this.lastCheckTimestamp || now - this.lastCheckTimestamp >= this.intervalSeconds * 1000) {
+            void this.checkAllWatchedItems();
+          }
+        }
+      });
+    }
   }
 
   public setOnAuthExpired(cb: (() => void) | null) {
@@ -211,14 +230,14 @@ class SyncEngine {
     this.stopPollingLoop();
     if (!this.isActive) return;
 
-    this.pollTimer = setInterval(() => {
+    this.pollTimer = workerSetInterval(() => {
       this.checkAllWatchedItems();
     }, this.intervalSeconds * 1000);
   }
 
   private stopPollingLoop() {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+    if (this.pollTimer !== null) {
+      workerClearInterval(this.pollTimer);
       this.pollTimer = null;
     }
   }

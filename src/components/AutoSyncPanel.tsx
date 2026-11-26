@@ -84,6 +84,15 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
                 />
                 <span>{isActive ? 'Monitoramento Ativo' : 'Pausado'}</span>
               </span>
+              {isActive && (
+                <span
+                  className="hidden sm:inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800/80 text-emerald-400 border border-slate-700/60 shrink-0"
+                  title="Sincronização contínua mesmo com outras abas ativas via Web Worker Timer."
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>2º Plano Protegido</span>
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-xs text-slate-400">

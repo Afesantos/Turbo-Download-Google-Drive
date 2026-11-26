@@ -89,6 +89,13 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
               }`}>
                 {isDownloading ? 'Em Execução' : isPaused ? 'Pausado' : 'Pronto'}
               </span>
+              <span
+                className="hidden sm:inline-flex items-center space-x-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-900/80 text-emerald-400 border border-slate-800"
+                title="Execução em 2º plano protegida: os downloads continuam funcionando mesmo se outras abas do navegador estiverem ativas."
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>2º Plano Protegido</span>
+              </span>
             </div>
 
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-1">

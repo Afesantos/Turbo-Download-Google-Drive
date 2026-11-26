@@ -53,7 +53,12 @@ import { generateUserGuidePDF } from './services/pdfGenerator';
 import { ExecutionActivityModal } from './components/ExecutionActivityModal';
 import { DownloadAllZipModal, ErrorRecoveryInfo } from './components/DownloadAllZipModal';
 import { ZipProgressModal } from './components/ZipProgressModal';
-import { useKeepAwake } from './utils/keepAwake';
+import {
+  useKeepAwake,
+  sendBackgroundNotification,
+  requestDesktopNotificationPermission,
+} from './utils/keepAwake';
+import { formatBytes, formatSpeed } from './utils/formatters';
 
 import { Header } from './components/Header';
 import { FolderSelectorCard } from './components/FolderSelectorCard';
@@ -213,13 +218,68 @@ export default function App() {
     localDirHandleRef.current = localDirHandle;
   }, [localDirHandle]);
 
-  // Prevent screen sleep, tab suspension, and accidental navigation during active mapping or downloads
+  // Notification permission state
+  const [notificationPerm, setNotificationPerm] = useState<NotificationPermission>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
+
+  const handleEnableNotifications = async () => {
+    const perm = await requestDesktopNotificationPermission();
+    setNotificationPerm(perm);
+    if (perm === 'granted') {
+      showToast(
+        'Notificações em segundo plano ativadas! Você receberá avisos no PC quando os downloads concluírem.',
+        'success'
+      );
+    } else if (perm === 'denied') {
+      showToast(
+        'Notificações bloqueadas pelo navegador. Habilite nas permissões do site se desejar receber avisos.',
+        'info'
+      );
+    }
+  };
+
+  // Prevent screen sleep, tab suspension, and accidental navigation during active mapping, downloads or sync
   const isTransferOrMappingActive =
     isDownloadingAllZip ||
     isZipModalOpen ||
     isMappingFolders ||
-    (telemetry.hasActiveDownloads && !telemetry.isPaused);
+    (telemetry.hasActiveDownloads && !telemetry.isPaused) ||
+    (syncState.isActive && syncState.watchedItems.length > 0);
   useKeepAwake(isTransferOrMappingActive);
+
+  // Dynamically update document title to show real-time progress while user is on other tabs
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    if (isDownloadingAllZip) {
+      document.title = `(${downloadAllProgress.percent}% • ZIP Completo) DriveSync Turbo`;
+    } else if (isZipModalOpen) {
+      document.title = `(${zipProgress.percent}% • ZIP) DriveSync Turbo`;
+    } else if (telemetry.hasActiveDownloads && !telemetry.isPaused) {
+      const spd = formatSpeed(telemetry.currentSpeedBytes);
+      const active = telemetry.activeCount;
+      document.title = `(${spd} • ${active} ativa(s)) DriveSync Turbo`;
+    } else if (isSuccessModalOpen) {
+      document.title = `(✔ Concluído!) DriveSync Turbo`;
+    } else if (syncState.isActive && syncState.isChecking) {
+      document.title = `(Sincronizando...) DriveSync Turbo`;
+    } else {
+      document.title = 'DriveSync Turbo - Download & Sincronização em Tempo Real';
+    }
+  }, [
+    isDownloadingAllZip,
+    downloadAllProgress.percent,
+    isZipModalOpen,
+    zipProgress.percent,
+    telemetry.hasActiveDownloads,
+    telemetry.isPaused,
+    telemetry.currentSpeedBytes,
+    telemetry.activeCount,
+    isSuccessModalOpen,
+    syncState.isActive,
+    syncState.isChecking,
+  ]);
   const [downloadStats, setDownloadStats] = useState<{
     count: number;
     errorCount: number;
@@ -382,6 +442,9 @@ export default function App() {
         previousErrorCount = updatedTelemetry.errorCount;
         previousTotalBytes = updatedTelemetry.totalDownloadedBytes;
         setIsSuccessModalOpen(true);
+        sendBackgroundNotification('DriveSync Turbo: Download Concluído!', {
+          body: `${batchCount} arquivo(s) salvos com sucesso (${formatBytes(batchBytes)}).`,
+        });
 
         if (batchMeta?.fullDriveSnapshot && tokenRef.current) {
           const trackingPayload = buildDriveTrackingPayload({
@@ -1199,6 +1262,9 @@ export default function App() {
         wroteToDisk: zipStats.wroteToDisk,
       });
       setIsSuccessModalOpen(true);
+      sendBackgroundNotification('DriveSync Turbo: Arquivo ZIP Concluído!', {
+        body: `Arquivo ZIP gerado com sucesso (${formatBytes(zipStats.totalBytes)}).`,
+      });
       showToast('Arquivo ZIP gerado com sucesso!', 'success');
     } catch (err: any) {
       setIsZipModalOpen(false);
@@ -1330,6 +1396,9 @@ export default function App() {
         trackingSavedToDrive: zipStats.trackingSavedToDrive,
       });
       setIsSuccessModalOpen(true);
+      sendBackgroundNotification('DriveSync Turbo: Backup ZIP Concluído!', {
+        body: `Download completo do Google Drive em ZIP concluído (${formatBytes(zipStats.totalBytes)}).`,
+      });
       showToast('Download completo do Google Drive em ZIP concluído!', 'success');
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
@@ -1582,6 +1651,8 @@ export default function App() {
           showToast('Guia de Funcionalidades em PDF gerado com sucesso!', 'success');
         }}
         onOpenExecutionModal={() => setIsExecutionModalOpen(true)}
+        onEnableNotifications={handleEnableNotifications}
+        notificationPerm={notificationPerm}
       />
 
       {/* Main Content Area */}

@@ -11,6 +11,7 @@ import {
   triggerBrowserDownload,
   getOrCreateSubdirectory,
 } from './localFileSystem';
+import { workerSetInterval, workerClearInterval } from '../utils/workerTimer';
 
 export interface DownloadTask {
   id: string;
@@ -55,7 +56,7 @@ class DownloadManager {
   // Speed telemetry metrics
   private peakSpeed: number = 0;
   private speedSamples: { timestamp: number; bytes: number }[] = [];
-  private speedTicker: ReturnType<typeof setInterval> | null = null;
+  private speedTicker: number | null = null;
   private archivedCompletedCount: number = 0;
   private archivedErrorCount: number = 0;
   private archivedDownloadedBytes: number = 0;
@@ -141,8 +142,8 @@ class DownloadManager {
   }
 
   private startSpeedTicker() {
-    if (this.speedTicker) return;
-    this.speedTicker = setInterval(() => {
+    if (this.speedTicker !== null) return;
+    this.speedTicker = workerSetInterval(() => {
       if (this.activeTasks.size === 0 || this.isPaused) {
         this.stopSpeedTicker();
         this.speedSamples = [];
@@ -156,8 +157,8 @@ class DownloadManager {
   }
 
   private stopSpeedTicker() {
-    if (this.speedTicker) {
-      clearInterval(this.speedTicker);
+    if (this.speedTicker !== null) {
+      workerClearInterval(this.speedTicker);
       this.speedTicker = null;
     }
   }
