@@ -4,6 +4,7 @@ import {
   deleteLocalFileIfExists,
   deleteOpfsTempFile,
   readLocalFileIfExists,
+  readOpfsTempFile,
   triggerBrowserDownload,
   verifyPermission,
   writeFixedLocalFile,
@@ -30,6 +31,11 @@ export interface CompletedCheckpointItem {
   byteSize: number;
 }
 
+export interface PendingScanFolder {
+  id: string;
+  pathSegments: string[];
+}
+
 export interface ZipAllCheckpointMeta {
   id: string;
   createdAt: number;
@@ -42,6 +48,11 @@ export interface ZipAllCheckpointMeta {
   folderCount: number;
   downloadedBytes: number;
   totalBytesExpected: number;
+  scanCompleted?: boolean;
+  pendingScanFolders?: PendingScanFolder[];
+  visitedFolderIds?: string[];
+  scannedFolders?: number;
+  discoveredFolders?: number;
   lastError?: string;
 }
 
@@ -54,6 +65,8 @@ export interface ZipAllCheckpointSummary {
   downloadedBytes: number;
   totalBytesExpected: number;
   percent: number;
+  scanCompleted: boolean;
+  scannedFolders: number;
   lastError?: string;
 }
 
@@ -90,6 +103,19 @@ export interface RecoveryManifestFile {
   }>;
   checkpointMeta: ZipAllCheckpointMeta;
 }
+
+const isCheckpointUsable = (meta: ZipAllCheckpointMeta | null | undefined): meta is ZipAllCheckpointMeta => {
+  if (!meta) return false;
+  if (Array.isArray(meta.files) && meta.files.length > 0) return true;
+  if (
+    meta.scanCompleted === false &&
+    ((Array.isArray(meta.pendingScanFolders) && meta.pendingScanFolders.length > 0) ||
+      (Array.isArray(meta.visitedFolderIds) && meta.visitedFolderIds.length > 0))
+  ) {
+    return true;
+  }
+  return false;
+};
 
 const openCheckpointDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -147,7 +173,7 @@ export const saveZipAllCheckpointFile = async (
   }
 };
 
-export const getZipAllCheckpointMeta = async (): Promise<ZipAllCheckpointMeta | null> => {
+const readIdbCheckpointMeta = async (): Promise<ZipAllCheckpointMeta | null> => {
   try {
     const db = await openCheckpointDB();
     const tx = db.transaction(META_STORE, 'readonly');
@@ -157,24 +183,73 @@ export const getZipAllCheckpointMeta = async (): Promise<ZipAllCheckpointMeta | 
       req.onerror = () => resolve(null);
     });
     db.close();
-    if (!result || !Array.isArray(result.files) || result.files.length === 0) {
-      return null;
-    }
-    return result;
+    return isCheckpointUsable(result) ? result : null;
   } catch {
     return null;
   }
 };
 
-export const getZipAllCheckpointSummary = async (): Promise<ZipAllCheckpointSummary | null> => {
-  const meta = await getZipAllCheckpointMeta();
+const readManifestMetaFromFile = async (file: File | null): Promise<ZipAllCheckpointMeta | null> => {
+  if (!file) return null;
+  try {
+    const raw = await file.text();
+    const parsed = JSON.parse(raw) as Partial<RecoveryManifestFile>;
+    const meta = parsed?.checkpointMeta;
+    return isCheckpointUsable(meta) ? meta : null;
+  } catch {
+    return null;
+  }
+};
+
+export const getZipAllCheckpointMeta = async (
+  targetDirHandle: FileSystemDirectoryHandle | null = null
+): Promise<ZipAllCheckpointMeta | null> => {
+  const candidates: ZipAllCheckpointMeta[] = [];
+
+  const idbMeta = await readIdbCheckpointMeta();
+  if (idbMeta) candidates.push(idbMeta);
+
+  const opfsFile = await readOpfsTempFile(TEMP_RECOVERY_MANIFEST_NAME);
+  const opfsMeta = await readManifestMetaFromFile(opfsFile);
+  if (opfsMeta) candidates.push(opfsMeta);
+
+  if (targetDirHandle) {
+    try {
+      const diskFile = await readLocalFileIfExists(targetDirHandle, TEMP_RECOVERY_MANIFEST_NAME);
+      const diskMeta = await readManifestMetaFromFile(diskFile);
+      if (diskMeta) candidates.push(diskMeta);
+    } catch {
+      // ignore disk read errors when checking availability
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const best = candidates[0];
+
+  if (!idbMeta || (best.updatedAt || 0) > (idbMeta.updatedAt || 0)) {
+    await saveZipAllCheckpointMeta(best);
+  }
+
+  return best;
+};
+
+export const getZipAllCheckpointSummary = async (
+  targetDirHandle: FileSystemDirectoryHandle | null = null
+): Promise<ZipAllCheckpointSummary | null> => {
+  const meta = await getZipAllCheckpointMeta(targetDirHandle);
   if (!meta) return null;
 
   const completedFiles = meta.completedItems?.length || 0;
   const totalFiles = meta.totalFiles || meta.files.length;
+  const scanCompleted = meta.scanCompleted !== false;
+  const scannedFolders = meta.scannedFolders || meta.folderCount || 0;
 
   let percent = 10;
-  if (meta.totalBytesExpected > 0) {
+  if (!scanCompleted) {
+    percent = Math.min(9, 2 + Math.floor(scannedFolders / 3));
+  } else if (meta.totalBytesExpected > 0) {
     percent = Math.min(89, 10 + Math.round((meta.downloadedBytes / meta.totalBytesExpected) * 79));
   } else if (totalFiles > 0) {
     percent = Math.min(89, 10 + Math.round((completedFiles / totalFiles) * 79));
@@ -189,35 +264,48 @@ export const getZipAllCheckpointSummary = async (): Promise<ZipAllCheckpointSumm
     downloadedBytes: meta.downloadedBytes,
     totalBytesExpected: meta.totalBytesExpected,
     percent,
+    scanCompleted,
+    scannedFolders,
     lastError: meta.lastError,
   };
 };
 
-export const loadZipAllCheckpointData = async (): Promise<{
+export const loadZipAllCheckpointData = async (
+  targetDirHandle: FileSystemDirectoryHandle | null = null
+): Promise<{
   meta: ZipAllCheckpointMeta;
   blobs: StoredZipBlobRecord[];
 } | null> => {
   try {
-    const db = await openCheckpointDB();
-    const tx = db.transaction([META_STORE, BLOB_STORE], 'readonly');
-    const metaReq = tx.objectStore(META_STORE).get(SESSION_KEY);
-    const blobsReq = tx.objectStore(BLOB_STORE).getAll();
+    const meta = await getZipAllCheckpointMeta(targetDirHandle);
+    if (!meta) return null;
 
-    const [meta, blobs] = await Promise.all([
-      new Promise<ZipAllCheckpointMeta | null>((resolve) => {
-        metaReq.onsuccess = () => resolve((metaReq.result as ZipAllCheckpointMeta) || null);
-        metaReq.onerror = () => resolve(null);
-      }),
-      new Promise<StoredZipBlobRecord[]>((resolve) => {
+    let blobs: StoredZipBlobRecord[] = [];
+    try {
+      const db = await openCheckpointDB();
+      const tx = db.transaction(BLOB_STORE, 'readonly');
+      const blobsReq = tx.objectStore(BLOB_STORE).getAll();
+      blobs = await new Promise<StoredZipBlobRecord[]>((resolve) => {
         blobsReq.onsuccess = () => resolve((blobsReq.result as StoredZipBlobRecord[]) || []);
         blobsReq.onerror = () => resolve([]);
-      }),
-    ]);
-
-    db.close();
-    if (!meta || !Array.isArray(meta.files) || meta.files.length === 0) {
-      return null;
+      });
+      db.close();
+    } catch {
+      blobs = [];
     }
+
+    const existingPaths = new Set(blobs.map((b) => b.zipPath));
+    const missingAnyBlob = (meta.completedItems || []).some((c) => !existingPaths.has(c.zipPath));
+    if (missingAnyBlob) {
+      const partialZipBlobs = await loadTempPartialZipBlobs(targetDirHandle);
+      partialZipBlobs.forEach((blob, zipPath) => {
+        if (!existingPaths.has(zipPath)) {
+          blobs.push({ zipPath, blob });
+          existingPaths.add(zipPath);
+        }
+      });
+    }
+
     return { meta, blobs };
   } catch {
     return null;
@@ -303,6 +391,7 @@ export const saveTempRecoveryManifest = async (
   const jsonText = JSON.stringify(manifest, null, 2);
 
   await saveZipAllCheckpointMeta(manifest.checkpointMeta);
+  await writeOpfsTempFile(TEMP_RECOVERY_MANIFEST_NAME, jsonText);
 
   let savedToDisk = false;
   if (targetDirHandle) {
@@ -318,10 +407,6 @@ export const saveTempRecoveryManifest = async (
     } catch {
       savedToDisk = false;
     }
-  }
-
-  if (!savedToDisk) {
-    await writeOpfsTempFile(TEMP_RECOVERY_MANIFEST_NAME, jsonText);
   }
 
   let downloadedToUser = false;
@@ -346,15 +431,29 @@ export const saveTempPartialZipOnError = async (
   zip: JSZip,
   targetDirHandle: FileSystemDirectoryHandle | null
 ): Promise<boolean> => {
-  if (!targetDirHandle) return false;
   try {
-    const hasPerm = await verifyPermission(targetDirHandle, true);
-    if (!hasPerm) return false;
     const partialBlob = await zip.generateAsync({
       type: 'blob',
       compression: 'STORE',
     });
-    return await writeFixedLocalFile(targetDirHandle, TEMP_PARTIAL_ZIP_NAME, partialBlob);
+
+    let saved = false;
+    if (targetDirHandle) {
+      try {
+        const hasPerm = await verifyPermission(targetDirHandle, true);
+        if (hasPerm) {
+          saved = await writeFixedLocalFile(targetDirHandle, TEMP_PARTIAL_ZIP_NAME, partialBlob);
+        }
+      } catch {
+        saved = false;
+      }
+    }
+
+    if (!saved) {
+      saved = await writeOpfsTempFile(TEMP_PARTIAL_ZIP_NAME, partialBlob);
+    }
+
+    return saved;
   } catch (err) {
     console.warn('Não foi possível salvar ZIP parcial temporário:', err);
     return false;
@@ -365,10 +464,16 @@ export const loadTempPartialZipBlobs = async (
   targetDirHandle: FileSystemDirectoryHandle | null
 ): Promise<Map<string, Blob>> => {
   const result = new Map<string, Blob>();
-  if (!targetDirHandle) return result;
   try {
-    const file = await readLocalFileIfExists(targetDirHandle, TEMP_PARTIAL_ZIP_NAME);
+    let file: File | null = null;
+    if (targetDirHandle) {
+      file = await readLocalFileIfExists(targetDirHandle, TEMP_PARTIAL_ZIP_NAME);
+    }
+    if (!file) {
+      file = await readOpfsTempFile(TEMP_PARTIAL_ZIP_NAME);
+    }
     if (!file) return result;
+
     const loadedZip = await JSZip.loadAsync(file);
     const entries = Object.values(loadedZip.files);
     for (const entry of entries) {
@@ -409,15 +514,14 @@ export const importRecoveryManifestFromFile = async (
   const raw = await file.text();
   const parsed = JSON.parse(raw) as Partial<RecoveryManifestFile>;
   const meta = parsed?.checkpointMeta;
-  if (!meta || !Array.isArray(meta.files) || meta.files.length === 0) {
-    throw new Error('Arquivo de retomada inválido ou sem lista de arquivos.');
+  if (!isCheckpointUsable(meta)) {
+    throw new Error('Arquivo de retomada inválido ou sem progresso capturado.');
   }
 
-  // Check if IndexedDB or DriveSync_Parcial_Temp.zip holds blobs for completedItems
-  const existingData = await loadZipAllCheckpointData();
+  const existingData = await loadZipAllCheckpointData(targetDirHandle);
   const existingPaths = new Set((existingData?.blobs || []).map((b) => b.zipPath));
 
-  if (targetDirHandle && (meta.completedItems || []).some((c) => !existingPaths.has(c.zipPath))) {
+  if ((meta.completedItems || []).some((c) => !existingPaths.has(c.zipPath))) {
     const partialBlobs = await loadTempPartialZipBlobs(targetDirHandle);
     partialBlobs.forEach((_blob, path) => existingPaths.add(path));
   }
@@ -434,5 +538,6 @@ export const importRecoveryManifestFromFile = async (
   };
 
   await saveZipAllCheckpointMeta(restoredMeta);
-  return await getZipAllCheckpointSummary();
+  await saveTempRecoveryManifest(restoredMeta, targetDirHandle, 'in_progress');
+  return await getZipAllCheckpointSummary(targetDirHandle);
 };

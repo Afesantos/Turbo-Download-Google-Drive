@@ -375,11 +375,12 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
 
             <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <button
-                onClick={onCancel}
+                onClick={onDenyResumeAndStartFresh}
                 disabled={isRenewingAuth}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all disabled:opacity-50"
+                className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-rose-950/70 hover:border-rose-700/70 hover:text-rose-200 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all disabled:opacity-50"
               >
-                Fechar
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reiniciar</span>
               </button>
 
               {onRenewAuthAndResume && (
@@ -388,14 +389,12 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   disabled={isRenewingAuth}
                   className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all disabled:opacity-60"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRenewingAuth ? 'animate-spin' : ''}`} />
-                  <span>
-                    {isRenewingAuth
-                      ? 'Renovando Acesso...'
-                      : savedCheckpoint
-                      ? 'Renovar Acesso e Continuar'
-                      : 'Renovar Acesso e Iniciar'}
-                  </span>
+                  {isRenewingAuth ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                  )}
+                  <span>{isRenewingAuth ? 'Renovando Acesso...' : 'Continuar'}</span>
                 </button>
               )}
             </div>
@@ -431,10 +430,12 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                   <div className="grid grid-cols-2 gap-2.5">
                     <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
                       <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                        Arquivos Capturados
+                        {savedCheckpoint.scanCompleted ? 'Arquivos Capturados' : 'Pastas Mapeadas'}
                       </span>
                       <span className="text-sm font-extrabold font-mono text-white mt-0.5 block">
-                        {savedCheckpoint.completedFiles} / {savedCheckpoint.totalFiles}
+                        {savedCheckpoint.scanCompleted
+                          ? `${savedCheckpoint.completedFiles} / ${savedCheckpoint.totalFiles}`
+                          : `${savedCheckpoint.scannedFolders} (${savedCheckpoint.totalFiles} arqs)`}
                       </span>
                     </div>
 
@@ -448,34 +449,36 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                     </div>
                   </div>
                 )}
+
+                {!savedCheckpoint && onImportRecoveryFile && (
+                  <button
+                    type="button"
+                    onClick={() => recoveryFileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center space-x-1.5 text-[11px] font-semibold text-blue-300 hover:text-blue-200 bg-blue-950/30 hover:bg-blue-950/50 border border-blue-800/60 rounded-xl px-3 py-2 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5 shrink-0" />
+                    <span>Carregar arquivo de retomada ({TEMP_RECOVERY_MANIFEST_NAME})</span>
+                  </button>
+                )}
               </div>
             </div>
 
             <div className="mt-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               <button
-                onClick={onCancel}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all"
+                onClick={onDenyResumeAndStartFresh}
+                className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-rose-950/70 hover:border-rose-700/70 hover:text-rose-200 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all"
               >
-                Retomar Depois
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reiniciar</span>
               </button>
 
-              {savedCheckpoint ? (
-                <button
-                  onClick={onResumeCheckpoint}
-                  className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Retomar de Onde Parou</span>
-                </button>
-              ) : (
-                <button
-                  onClick={onConfirmFresh}
-                  className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-amber-600/25 active:scale-95 transition-all"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Tentar Novamente</span>
-                </button>
-              )}
+              <button
+                onClick={onResumeCheckpoint}
+                className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Continuar</span>
+              </button>
             </div>
           </div>
         ) : isResumePrompt && savedCheckpoint ? (
@@ -505,10 +508,12 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                      Progresso Salvo
+                      {savedCheckpoint.scanCompleted ? 'Progresso Salvo' : 'Pastas Mapeadas'}
                     </span>
                     <span className="text-sm font-extrabold font-mono text-white mt-0.5 block">
-                      {savedCheckpoint.completedFiles} / {savedCheckpoint.totalFiles} arquivos
+                      {savedCheckpoint.scanCompleted
+                        ? `${savedCheckpoint.completedFiles} / ${savedCheckpoint.totalFiles} arquivos`
+                        : `${savedCheckpoint.scannedFolders} (${savedCheckpoint.totalFiles} arqs)`}
                     </span>
                   </div>
 
@@ -540,7 +545,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-rose-950/70 hover:border-rose-700/70 hover:text-rose-200 text-slate-200 font-semibold px-4 py-2.5 rounded-xl text-xs border border-slate-700 transition-all"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Negar e Começar do Zero</span>
+                <span>Reiniciar</span>
               </button>
 
               <button
@@ -548,7 +553,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
                 className="flex-1 flex items-center justify-center space-x-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-emerald-600/25 active:scale-95 transition-all"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Autorizar e Continuar</span>
+                <span>Continuar</span>
               </button>
             </div>
           </div>

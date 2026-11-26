@@ -1,5 +1,13 @@
 import JSZip from 'jszip';
-import { DriveFile, downloadFileStream, FileWithPath, listAllFilesRecursively, NON_EXPORTABLE_WORKSPACE_TYPES } from './drive';
+import {
+  DriveFile,
+  DriveScanState,
+  downloadFileStream,
+  FileWithPath,
+  listAllFilesRecursively,
+  NON_EXPORTABLE_WORKSPACE_TYPES,
+  scanDriveRecursivelyResumable,
+} from './drive';
 import { triggerBrowserDownload, verifyPermission, writeBufferToLocalFile } from './localFileSystem';
 import {
   cleanupTempRecoveryFiles,
@@ -8,6 +16,7 @@ import {
   saveTempPartialZipOnError,
   saveTempRecoveryManifest,
   saveZipAllCheckpointFile,
+  saveZipAllCheckpointMeta,
   ZipAllCheckpointMeta,
 } from './zipCheckpoint';
 
@@ -444,6 +453,7 @@ export const exportAllDriveToZip = async (
   let allDriveFiles: FileWithPath[] = [];
   let scannedFolders = 0;
   let discoveredFolders = 1;
+  let scanCompleted = false;
   const usedZipPathsLower = new Set<string>();
   const uniqueFolders = new Set<string>();
   const completedFileIds = new Set<string>();
@@ -453,36 +463,56 @@ export const exportAllDriveToZip = async (
   let downloadedCount = 0;
   let checkpointMeta: ZipAllCheckpointMeta | null = null;
 
-  const persistErrorRecoveryFiles = async (err: any) => {
-    if (err?.name === 'AbortError' || signal?.aborted) return;
+  let scanState: DriveScanState = {
+    pendingFolders: [{ id: 'root', pathSegments: [] }],
+    visitedFolderIds: [],
+    uniqueFolders: [],
+    files: [],
+    scannedFolders: 0,
+    discoveredFolders: 1,
+  };
 
-    const fallbackMeta: ZipAllCheckpointMeta = checkpointMeta || {
+  const buildCurrentMeta = (lastError?: string): ZipAllCheckpointMeta => {
+    const filesSnapshot = scanCompleted ? allDriveFiles : scanState.files;
+    const totalExpected = filesSnapshot.reduce(
+      (sum, item) => sum + parseInt(item.file.size || '0', 10),
+      0
+    );
+    return {
       id: 'active_session',
       createdAt: checkpointCreatedAt,
       updatedAt: Date.now(),
-      files: allDriveFiles,
+      files: filesSnapshot,
       completedItems,
       usedZipPathsLower: Array.from(usedZipPathsLower),
       uniqueFolders: Array.from(uniqueFolders),
-      totalFiles: allDriveFiles.length,
-      folderCount: Math.max(scannedFolders, uniqueFolders.size),
+      totalFiles: filesSnapshot.length,
+      folderCount: Math.max(scannedFolders, uniqueFolders.size, scanState.scannedFolders),
       downloadedBytes: committedBytes,
-      totalBytesExpected: allDriveFiles.reduce(
-        (sum, item) => sum + parseInt(item.file.size || '0', 10),
-        0
-      ),
-      lastError: err?.message || 'Erro durante a transferência',
+      totalBytesExpected: totalExpected,
+      scanCompleted,
+      pendingScanFolders: scanCompleted ? [] : scanState.pendingFolders,
+      visitedFolderIds: scanState.visitedFolderIds,
+      scannedFolders: Math.max(scannedFolders, scanState.scannedFolders),
+      discoveredFolders: Math.max(discoveredFolders, scanState.discoveredFolders),
+      lastError,
     };
+  };
+
+  const persistErrorRecoveryFiles = async (err: any) => {
+    if (err?.name === 'AbortError' || signal?.aborted) return;
+
+    const latestMeta = buildCurrentMeta(err?.message || 'Erro durante a transferência');
 
     try {
       const recoveryRes = await saveTempRecoveryManifest(
-        fallbackMeta,
+        latestMeta,
         targetDirHandle,
         'error',
         err?.message || 'Erro desconhecido durante o download.',
         true
       );
-      if (downloadedCount > 0 && targetDirHandle) {
+      if (downloadedCount > 0) {
         await saveTempPartialZipOnError(zip, targetDirHandle);
       }
       if (err && typeof err === 'object') {
@@ -512,23 +542,43 @@ export const exportAllDriveToZip = async (
         scanStartedAt,
       });
 
-      const saved = await loadZipAllCheckpointData();
+      const saved = await loadZipAllCheckpointData(targetDirHandle);
       if (saved) {
         loadedSaved = true;
-        allDriveFiles = saved.meta.files;
-        scannedFolders = saved.meta.folderCount;
-        discoveredFolders = Math.max(1, scannedFolders);
-        checkpointCreatedAt = saved.meta.createdAt;
+        checkpointCreatedAt = saved.meta.createdAt || startedAt;
         saved.meta.uniqueFolders.forEach((f) => uniqueFolders.add(f));
+        scanCompleted = saved.meta.scanCompleted !== false;
+
+        if (!scanCompleted && saved.meta.pendingScanFolders) {
+          scanState = {
+            pendingFolders: [...saved.meta.pendingScanFolders],
+            visitedFolderIds: [...(saved.meta.visitedFolderIds || [])],
+            uniqueFolders: Array.from(uniqueFolders),
+            files: [...(saved.meta.files || [])],
+            scannedFolders: saved.meta.scannedFolders || saved.meta.folderCount || 0,
+            discoveredFolders: Math.max(
+              1,
+              saved.meta.discoveredFolders ||
+                (saved.meta.scannedFolders || 0) + saved.meta.pendingScanFolders.length
+            ),
+          };
+          scannedFolders = scanState.scannedFolders;
+          discoveredFolders = scanState.discoveredFolders;
+          allDriveFiles = scanState.files;
+        } else {
+          allDriveFiles = saved.meta.files;
+          scannedFolders = saved.meta.scannedFolders || saved.meta.folderCount;
+          discoveredFolders = Math.max(1, saved.meta.discoveredFolders || scannedFolders);
+        }
 
         const blobByPath = new Map<string, Blob>();
         for (const rec of saved.blobs) {
           blobByPath.set(rec.zipPath, rec.blob);
         }
 
-        // If any blobs are missing in IndexedDB, attempt recovery from DriveSync_Parcial_Temp.zip on disk
+        // Also check DriveSync_Parcial_Temp.zip on disk or OPFS if any blobs are missing
         const missingFromIdb = (saved.meta.completedItems || []).some((c) => !blobByPath.has(c.zipPath));
-        if (missingFromIdb && targetDirHandle) {
+        if (missingFromIdb) {
           const partialZipBlobs = await loadTempPartialZipBlobs(targetDirHandle);
           partialZipBlobs.forEach((blob, path) => {
             if (!blobByPath.has(path)) {
@@ -551,34 +601,38 @@ export const exportAllDriveToZip = async (
 
         initialResumedBytes = committedBytes;
         initialResumedFiles = completedItems.length;
-        scanCompletedAt = Date.now();
-        downloadStartedAt = scanCompletedAt;
+        if (scanCompleted) {
+          scanCompletedAt = Date.now();
+          downloadStartedAt = scanCompletedAt;
+        }
       }
     }
 
-    if (!loadedSaved) {
+    if (!loadedSaved && !resumeFromCheckpoint) {
       await cleanupTempRecoveryFiles(targetDirHandle);
+    }
 
+    if (!loadedSaved || !scanCompleted) {
       onProgress?.({
         phase: 'scanning',
-        percent: 2,
-        currentItem: 'Meu Drive',
+        percent: Math.min(9, 2 + Math.floor(scannedFolders / 3)),
+        currentItem:
+          loadedSaved && scanState.pendingFolders[0]?.pathSegments.length
+            ? scanState.pendingFolders[0].pathSegments.join(' / ')
+            : 'Meu Drive',
         processedFiles: 0,
-        totalFiles: 0,
-        folderCount: 0,
-        discoveredFolders: 1,
-        downloadedBytes: 0,
+        totalFiles: scanState.files.length,
+        folderCount: scannedFolders,
+        discoveredFolders,
+        downloadedBytes: committedBytes,
         totalBytesExpected: 0,
         startedAt,
         scanStartedAt,
       });
 
-      const scanTracker = { scannedFolders: 0, discoveredFolders: 1 };
-      allDriveFiles = await listAllFilesRecursively(
+      allDriveFiles = await scanDriveRecursivelyResumable(
         accessToken,
-        'root',
-        [],
-        new Set<string>(),
+        scanState,
         (pathSegments) => {
           const visitedFolderPath = pathSegments.map(sanitizeSegment).filter(Boolean).join('/');
           if (visitedFolderPath) {
@@ -594,16 +648,20 @@ export const exportAllDriveToZip = async (
             percent: Math.min(10, 2 + Math.floor(scannedFolders / 3)),
             currentItem: scanInfo.currentFolder,
             processedFiles: 0,
-            totalFiles: 0,
+            totalFiles: scanState.files.length,
             folderCount: scannedFolders,
             discoveredFolders,
-            downloadedBytes: 0,
+            downloadedBytes: committedBytes,
             totalBytesExpected: 0,
             startedAt,
             scanStartedAt,
           });
         },
-        scanTracker
+        async () => {
+          const midScanMeta = buildCurrentMeta();
+          await saveZipAllCheckpointMeta(midScanMeta);
+          await saveTempRecoveryManifest(midScanMeta, targetDirHandle, 'in_progress');
+        }
       );
 
       if (signal?.aborted) {
@@ -619,6 +677,7 @@ export const exportAllDriveToZip = async (
         if (folderPath) uniqueFolders.add(folderPath);
       }
 
+      scanCompleted = true;
       scanCompletedAt = Date.now();
       downloadStartedAt = scanCompletedAt;
     }
@@ -629,23 +688,9 @@ export const exportAllDriveToZip = async (
       0
     );
 
-    checkpointMeta = {
-      id: 'active_session',
-      createdAt: checkpointCreatedAt,
-      updatedAt: Date.now(),
-      files: allDriveFiles,
-      completedItems,
-      usedZipPathsLower: Array.from(usedZipPathsLower),
-      uniqueFolders: Array.from(uniqueFolders),
-      totalFiles: totalItems,
-      folderCount: Math.max(scannedFolders, uniqueFolders.size),
-      downloadedBytes: committedBytes,
-      totalBytesExpected,
-    };
+    checkpointMeta = buildCurrentMeta();
 
-    if (!loadedSaved) {
-      await saveTempRecoveryManifest(checkpointMeta, targetDirHandle, 'in_progress');
-    }
+    await saveTempRecoveryManifest(checkpointMeta, targetDirHandle, 'in_progress');
 
     let processedItems = completedFileIds.size;
     let downloadedBytes = committedBytes;
@@ -755,7 +800,18 @@ export const exportAllDriveToZip = async (
           await saveTempRecoveryManifest(checkpointMeta, targetDirHandle, 'in_progress');
         }
       } catch (err: any) {
-        if (err?.name === 'AbortError' || signal?.aborted || err?.status === 401) {
+        const isNetworkError =
+          err instanceof TypeError || (typeof navigator !== 'undefined' && !navigator.onLine);
+        const isRecoverableApiError =
+          err?.status === 401 ||
+          err?.status === 429 ||
+          (typeof err?.status === 'number' && err.status >= 500);
+        if (
+          err?.name === 'AbortError' ||
+          signal?.aborted ||
+          isRecoverableApiError ||
+          isNetworkError
+        ) {
           throw err;
         }
         console.warn(`Erro ao adicionar ${item.file.name} ao ZIP:`, err);

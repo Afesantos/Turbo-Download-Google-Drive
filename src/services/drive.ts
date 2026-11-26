@@ -274,6 +274,88 @@ export const listAllFilesRecursively = async (
   return result;
 };
 
+export interface DriveScanState {
+  pendingFolders: Array<{ id: string; pathSegments: string[] }>;
+  visitedFolderIds: string[];
+  uniqueFolders: string[];
+  files: FileWithPath[];
+  scannedFolders: number;
+  discoveredFolders: number;
+}
+
+export const scanDriveRecursivelyResumable = async (
+  accessToken: string,
+  state: DriveScanState,
+  onFolderVisited?: (pathSegments: string[]) => void,
+  signal?: AbortSignal,
+  onScanProgress?: (info: RecursiveScanProgress) => void,
+  onCheckpointTick?: (state: DriveScanState) => Promise<void> | void
+): Promise<FileWithPath[]> => {
+  const visitedSet = new Set<string>(state.visitedFolderIds);
+  const uniqueFolderSet = new Set<string>(state.uniqueFolders);
+  const seenFileIds = new Set<string>(state.files.map((f) => f.file.id));
+  let foldersSinceCheckpoint = 0;
+
+  while (state.pendingFolders.length > 0) {
+    if (signal?.aborted) {
+      throw new DOMException('Operação cancelada pelo usuário.', 'AbortError');
+    }
+
+    const current = state.pendingFolders[0];
+    if (visitedSet.has(current.id)) {
+      state.pendingFolders.shift();
+      continue;
+    }
+
+    const resp = await listDriveFiles(accessToken, current.id, '', undefined, 1000, signal);
+
+    // Pop and mark visited only AFTER listDriveFiles succeeds so failed folders are retried on resume
+    state.pendingFolders.shift();
+    visitedSet.add(current.id);
+    state.visitedFolderIds.push(current.id);
+
+    if (current.pathSegments.length > 0) {
+      onFolderVisited?.(current.pathSegments);
+    }
+
+    const childFolders = resp.files.filter((item) => item.isFolder && !visitedSet.has(item.id));
+    for (const child of childFolders) {
+      state.pendingFolders.push({
+        id: child.id,
+        pathSegments: [...current.pathSegments, child.name],
+      });
+    }
+
+    for (const item of resp.files) {
+      if (!item.isFolder && !NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType) && !seenFileIds.has(item.id)) {
+        seenFileIds.add(item.id);
+        state.files.push({
+          file: item,
+          pathSegments: current.pathSegments,
+        });
+      }
+    }
+
+    state.discoveredFolders += childFolders.length;
+    state.scannedFolders += 1;
+    state.uniqueFolders = Array.from(uniqueFolderSet);
+
+    onScanProgress?.({
+      scannedFolders: state.scannedFolders,
+      discoveredFolders: Math.max(state.discoveredFolders, state.scannedFolders + state.pendingFolders.length),
+      currentFolder: current.pathSegments.join(' / ') || 'Meu Drive',
+    });
+
+    foldersSinceCheckpoint++;
+    if (foldersSinceCheckpoint >= 12 && onCheckpointTick) {
+      foldersSinceCheckpoint = 0;
+      await onCheckpointTick(state);
+    }
+  }
+
+  return state.files;
+};
+
 /**
  * Ultra-fast direct streaming download from Google Drive
  * Uses HTTP streaming response with progress tracking.

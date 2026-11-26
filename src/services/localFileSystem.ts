@@ -345,6 +345,19 @@ export const writeOpfsTempFile = async (
   }
 };
 
+export const readOpfsTempFile = async (fileName: string): Promise<File | null> => {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+      return null;
+    }
+    const root = await navigator.storage.getDirectory();
+    const fileHandle = await root.getFileHandle(fileName, { create: false });
+    return await fileHandle.getFile();
+  } catch {
+    return null;
+  }
+};
+
 export const deleteOpfsTempFile = async (fileName: string): Promise<void> => {
   try {
     if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {

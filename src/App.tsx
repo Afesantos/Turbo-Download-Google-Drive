@@ -920,7 +920,7 @@ export default function App() {
       downloadedBytes: 0,
       totalBytesExpected: 0,
     });
-    const checkpoint = await getZipAllCheckpointSummary();
+    const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
     setSavedZipCheckpoint(checkpoint);
     setIsDownloadAllModalOpen(true);
   };
@@ -963,7 +963,7 @@ export default function App() {
       showToast('Download completo do Google Drive em ZIP concluído!', 'success');
     } catch (err: any) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
-        const checkpoint = await getZipAllCheckpointSummary();
+        const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
         setSavedZipCheckpoint(checkpoint);
         showToast(
           checkpoint
@@ -973,7 +973,7 @@ export default function App() {
         );
         setIsDownloadAllModalOpen(false);
       } else if (err?.status === 401) {
-        const checkpoint = await getZipAllCheckpointSummary();
+        const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
         setSavedZipCheckpoint(checkpoint);
         setDownloadAllErrorRecovery(null);
         setCachedAccessToken(null);
@@ -985,7 +985,7 @@ export default function App() {
         );
       } else {
         console.error('Erro ao baixar todo o Drive em ZIP:', err);
-        const checkpoint = await getZipAllCheckpointSummary();
+        const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
         setSavedZipCheckpoint(checkpoint);
         setDownloadAllErrorRecovery({
           message: err?.message || 'Falha ao gerar o ZIP completo do Drive.',
@@ -1028,12 +1028,13 @@ export default function App() {
 
   const handleDenyResumeAndStartFresh = async () => {
     let activeToken = token;
-    if (isTokenLikelyExpired()) {
+    if (isDownloadAllAuthExpired || isTokenLikelyExpired()) {
       const refreshed = await renewAccessTokenOnClick();
       if (!refreshed) return;
       activeToken = refreshed;
     }
     await cleanupTempRecoveryFiles(localDirHandle);
+    setIsDownloadAllAuthExpired(false);
     setDownloadAllErrorRecovery(null);
     setSavedZipCheckpoint(null);
     void runDownloadAllZip(false, activeToken || undefined);
@@ -1058,7 +1059,7 @@ export default function App() {
     try {
       const refreshed = await renewAccessTokenOnClick();
       if (!refreshed) return;
-      const checkpoint = await getZipAllCheckpointSummary();
+      const checkpoint = await getZipAllCheckpointSummary(localDirHandle);
       setIsDownloadAllAuthExpired(false);
       setDownloadAllErrorRecovery(null);
       void runDownloadAllZip(checkpoint !== null, refreshed);
