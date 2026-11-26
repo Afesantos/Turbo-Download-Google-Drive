@@ -15,9 +15,10 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
-// Google Drive Read-Only scope for browsing, listing, and downloading files
+// Google Drive scopes: read-only across Drive + drive.file to save/manage app tracking files in Drive root
 export const SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.file',
 ];
 
 const provider = new GoogleAuthProvider();

@@ -15,6 +15,7 @@ import {
 } from './services/auth';
 import {
   DriveFile,
+  FileWithPath,
   listDriveFiles,
   listAllFilesRecursively,
   NON_EXPORTABLE_WORKSPACE_TYPES,
@@ -63,6 +64,15 @@ import { DriveExplorer } from './components/DriveExplorer';
 import { TransfersDrawer } from './components/TransfersDrawer';
 import { CenterProgressOverlay } from './components/CenterProgressOverlay';
 import { DownloadSuccessModal } from './components/DownloadSuccessModal';
+import { DriveTrackingStartupModal } from './components/DriveTrackingStartupModal';
+import {
+  buildDriveTrackingPayload,
+  checkDriveTrackingWithLocalPriority,
+  deleteTrackingFileEverywhere,
+  DriveTrackingCheckResult,
+  DriveTrackingFile,
+  saveTrackingFileEverywhere,
+} from './services/driveTracking';
 import {
   Zap,
   FolderOpen,
@@ -90,6 +100,7 @@ export default function App() {
   const [isSelectingFolder, setIsSelectingFolder] = useState<boolean>(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState<boolean>(false);
   const [isNativeDisk, setIsNativeDisk] = useState<boolean>(false);
+  const [isLocalFolderInitialized, setIsLocalFolderInitialized] = useState<boolean>(false);
 
   // Google Drive files & navigation
   const [currentFolderId, setCurrentFolderId] = useState<string>('root');
@@ -177,9 +188,30 @@ export default function App() {
     driveFolderSet: Set<string>;
     localFolderSet: Set<string>;
     skippedNonExportableCount: number;
+    fullDriveSnapshot?: {
+      files: FileWithPath[];
+      uniqueFolders: string[];
+      skippedNonExportableCount: number;
+    };
   } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasExplicitDownloadsChoiceRef = useRef<boolean>(false);
+  const hasCheckedStartupTrackingRef = useRef<boolean>(false);
+  const tokenRef = useRef<string | null>(null);
+  const localDirHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
+
+  const [driveTrackingCheck, setDriveTrackingCheck] = useState<DriveTrackingCheckResult | null>(null);
+  const [isDriveTrackingModalOpen, setIsDriveTrackingModalOpen] = useState<boolean>(false);
+  const [isDiscardingDriveTracking, setIsDiscardingDriveTracking] = useState<boolean>(false);
+  const [acceleratedCatalog, setAcceleratedCatalog] = useState<DriveTrackingFile | null>(null);
+
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  useEffect(() => {
+    localDirHandleRef.current = localDirHandle;
+  }, [localDirHandle]);
 
   // Prevent screen sleep, tab suspension, and accidental navigation during active mapping or downloads
   const isTransferOrMappingActive =
@@ -204,6 +236,8 @@ export default function App() {
     isZip?: boolean;
     zipFileName?: string;
     wroteToDisk?: boolean;
+    trackingSavedLocally?: boolean;
+    trackingSavedToDrive?: boolean;
   }>({
     count: 0,
     errorCount: 0,
@@ -243,33 +277,37 @@ export default function App() {
     );
 
     // Try restoring directory handle from IndexedDB or fallback
-    getStoredDirectoryHandle().then(async (handle) => {
-      if (handle) {
-        try {
-          const permState = await checkStoredPermission(handle, true);
-          if (permState !== 'denied') {
-            setLocalDirHandle(handle);
-            setLocalFolderName(handle.name);
-            setIsNativeDisk(true);
-            downloadManager.setTargetDirectory(handle);
-            return;
+    getStoredDirectoryHandle()
+      .then(async (handle) => {
+        if (handle) {
+          try {
+            const permState = await checkStoredPermission(handle, true);
+            if (permState !== 'denied') {
+              setLocalDirHandle(handle);
+              setLocalFolderName(handle.name);
+              setIsNativeDisk(true);
+              downloadManager.setTargetDirectory(handle);
+              return;
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
         }
-      }
-      // Check fallback folder
-      const fallback = getFallbackFolderName();
-      if (fallback) {
-        setLocalFolderName(`Downloads / ${fallback}`);
-        setIsNativeDisk(false);
-      } else {
-        // Automatically default to Downloads / DriveSync so user always has ready-to-go destination
-        saveFallbackFolderName('DriveSync');
-        setLocalFolderName('Downloads / DriveSync');
-        setIsNativeDisk(false);
-      }
-    });
+        // Check fallback folder
+        const fallback = getFallbackFolderName();
+        if (fallback) {
+          setLocalFolderName(`Downloads / ${fallback}`);
+          setIsNativeDisk(false);
+        } else {
+          // Automatically default to Downloads / DriveSync so user always has ready-to-go destination
+          saveFallbackFolderName('DriveSync');
+          setLocalFolderName('Downloads / DriveSync');
+          setIsNativeDisk(false);
+        }
+      })
+      .finally(() => {
+        setIsLocalFolderInitialized(true);
+      });
 
     // Subscribe to DownloadManager updates
     let previousActiveCount = 0;
@@ -344,6 +382,26 @@ export default function App() {
         previousErrorCount = updatedTelemetry.errorCount;
         previousTotalBytes = updatedTelemetry.totalDownloadedBytes;
         setIsSuccessModalOpen(true);
+
+        if (batchMeta?.fullDriveSnapshot && tokenRef.current) {
+          const trackingPayload = buildDriveTrackingPayload({
+            files: batchMeta.fullDriveSnapshot.files,
+            uniqueFolders: batchMeta.fullDriveSnapshot.uniqueFolders,
+            skippedNonExportableCount: batchMeta.fullDriveSnapshot.skippedNonExportableCount,
+            startedAt: startTs,
+            endedAt,
+            source: 'direct_download',
+          });
+          saveTrackingFileEverywhere(tokenRef.current, localDirHandleRef.current, trackingPayload)
+            .then((saveRes) => {
+              setDownloadStats((prev) => ({
+                ...prev,
+                trackingSavedLocally: saveRes.savedLocally,
+                trackingSavedToDrive: saveRes.savedToDrive,
+              }));
+            })
+            .catch(() => {});
+        }
       } else if (
         updatedTelemetry.completedCount < previousCompletedCount ||
         updatedTelemetry.errorCount < previousErrorCount
@@ -414,6 +472,29 @@ export default function App() {
     }
   }, [token, currentFolderId, loadFiles]);
 
+  // 2B. Startup verification: check local folder first, then Google Drive root if absent locally
+  useEffect(() => {
+    if (!token || !isLocalFolderInitialized || hasCheckedStartupTrackingRef.current) {
+      return;
+    }
+    hasCheckedStartupTrackingRef.current = true;
+    let cancelled = false;
+
+    checkDriveTrackingWithLocalPriority(token, localDirHandle)
+      .then((result) => {
+        if (cancelled || !result) return;
+        setDriveTrackingCheck(result);
+        setIsDriveTrackingModalOpen(true);
+      })
+      .catch((err) => {
+        console.warn('Erro ao verificar arquivo de acompanhamento na inicialização:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, isLocalFolderInitialized, localDirHandle]);
+
   // Auth actions
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
@@ -445,6 +526,10 @@ export default function App() {
 
   const handleLogout = async () => {
     await logout();
+    hasCheckedStartupTrackingRef.current = false;
+    setDriveTrackingCheck(null);
+    setIsDriveTrackingModalOpen(false);
+    setAcceleratedCatalog(null);
     setUser(null);
     setToken(null);
     setFiles([]);
@@ -605,7 +690,12 @@ export default function App() {
     driveFilesCount: number,
     driveFolderSet: Set<string>,
     localFolderSet: Set<string>,
-    skippedNonExportableCount: number
+    skippedNonExportableCount: number,
+    fullDriveSnapshot?: {
+      files: FileWithPath[];
+      uniqueFolders: string[];
+      skippedNonExportableCount: number;
+    }
   ) => {
     const existing =
       directBatchRef.current && downloadManager.getPendingCount() > 0
@@ -616,6 +706,9 @@ export default function App() {
       existing.skippedNonExportableCount += skippedNonExportableCount;
       driveFolderSet.forEach((f) => existing.driveFolderSet.add(f));
       localFolderSet.forEach((f) => existing.localFolderSet.add(f));
+      if (fullDriveSnapshot) {
+        existing.fullDriveSnapshot = fullDriveSnapshot;
+      }
     } else {
       directBatchRef.current = {
         startedAt: batchStart,
@@ -623,6 +716,7 @@ export default function App() {
         driveFolderSet: new Set(driveFolderSet),
         localFolderSet: new Set(localFolderSet),
         skippedNonExportableCount,
+        fullDriveSnapshot,
       };
     }
   };
@@ -710,12 +804,20 @@ export default function App() {
 
         if (filesToEnqueue.length > 0) {
           downloadStartTimeRef.current = batchStartedAt;
+          const isRootFullDownload = currentFolderId === 'root' && selectedFileIds.size === 0;
           recordDirectBatchMeta(
             batchStartedAt,
             filesToEnqueue.length,
             driveFolderSet,
             localFolderSet,
-            skippedNonExportableCount
+            skippedNonExportableCount,
+            isRootFullDownload
+              ? {
+                  files: filesToEnqueue,
+                  uniqueFolders: Array.from(driveFolderSet),
+                  skippedNonExportableCount,
+                }
+              : undefined
           );
           downloadManager.enqueueFiles(filesToEnqueue);
           showToast(
@@ -1170,7 +1272,11 @@ export default function App() {
     setIsDownloadAllModalOpen(true);
   };
 
-  const runDownloadAllZip = async (resumeFromCheckpoint: boolean, overrideToken?: string) => {
+  const runDownloadAllZip = async (
+    resumeFromCheckpoint: boolean,
+    overrideToken?: string,
+    preMappedOverride?: DriveTrackingFile | null
+  ) => {
     const activeToken = overrideToken || token;
     if (!activeToken) return;
     const controller = new AbortController();
@@ -1182,6 +1288,8 @@ export default function App() {
     setSavedZipCheckpoint(null);
     setIsDownloadingAllZip(true);
     const startTime = Date.now();
+    const effectivePreMapped =
+      preMappedOverride !== undefined ? preMappedOverride : acceleratedCatalog;
 
     try {
       const zipStats = await exportAllDriveToZip(
@@ -1190,7 +1298,8 @@ export default function App() {
         (progress) => setDownloadAllProgress(progress),
         controller.signal,
         resumeFromCheckpoint,
-        user?.displayName || user?.email || null
+        user?.displayName || user?.email || null,
+        effectivePreMapped
       );
       const endedAt = zipStats.endedAt || Date.now();
       const elapsed =
@@ -1199,6 +1308,7 @@ export default function App() {
           : Math.max(0, Math.round((endedAt - startTime) / 1000));
       const avgSpeed = zipStats.totalBytes > 0 ? Math.round(zipStats.totalBytes / Math.max(1, elapsed)) : 0;
 
+      setAcceleratedCatalog(null);
       setIsDownloadAllModalOpen(false);
       setDownloadStats({
         count: zipStats.fileCount,
@@ -1216,6 +1326,8 @@ export default function App() {
         isZip: true,
         zipFileName: zipStats.zipFileName,
         wroteToDisk: zipStats.wroteToDisk,
+        trackingSavedLocally: zipStats.trackingSavedLocally,
+        trackingSavedToDrive: zipStats.trackingSavedToDrive,
       });
       setIsSuccessModalOpen(true);
       showToast('Download completo do Google Drive em ZIP concluído!', 'success');
@@ -1306,10 +1418,11 @@ export default function App() {
       activeToken = refreshed;
     }
     await cleanupTempRecoveryFiles(localDirHandle);
+    setAcceleratedCatalog(null);
     setIsDownloadAllAuthExpired(false);
     setDownloadAllErrorRecovery(null);
     setSavedZipCheckpoint(null);
-    void runDownloadAllZip(false, activeToken || undefined);
+    void runDownloadAllZip(false, activeToken || undefined, null);
   };
 
   const handleImportRecoveryFile = async (file: File) => {
@@ -1375,6 +1488,59 @@ export default function App() {
       setIsDownloadAllCancelConfirm(false);
       setDownloadAllErrorRecovery(null);
       setIsDownloadAllModalOpen(false);
+    }
+  };
+
+  const handleUseDriveTrackingToAccelerate = async () => {
+    if (!driveTrackingCheck) return;
+    const catalog = driveTrackingCheck.trackingData;
+    setAcceleratedCatalog(catalog);
+    setIsDriveTrackingModalOpen(false);
+
+    let activeToken = token;
+    if (isTokenLikelyExpired()) {
+      const refreshed = await renewAccessTokenOnClick();
+      if (!refreshed) return;
+      activeToken = refreshed;
+    }
+
+    if (localDirHandle) {
+      await verifyPermission(localDirHandle, true);
+    }
+
+    setDownloadAllProgress({
+      phase: 'scanning',
+      percent: 10,
+      currentItem: `Carregando ${catalog.totalFilesCount} arquivo(s) mapeados...`,
+      processedFiles: 0,
+      totalFiles: catalog.totalFilesCount,
+      folderCount: catalog.folderCount,
+      downloadedBytes: 0,
+      totalBytesExpected: catalog.totalBytesExpected,
+    });
+    setIsDownloadAllModalOpen(true);
+    showToast(
+      `Mapeamento acelerado ativado (${catalog.totalFilesCount} arquivos). Iniciando contagem e download!`,
+      'success'
+    );
+    void runDownloadAllZip(false, activeToken || undefined, catalog);
+  };
+
+  const handleDiscardDriveTrackingAndStartFresh = async () => {
+    setIsDiscardingDriveTracking(true);
+    try {
+      if (token) {
+        await deleteTrackingFileEverywhere(token, localDirHandle, driveTrackingCheck?.driveFileId);
+      }
+      await cleanupTempRecoveryFiles(localDirHandle);
+      setAcceleratedCatalog(null);
+      setDriveTrackingCheck(null);
+      setIsDriveTrackingModalOpen(false);
+      showToast('Arquivo de acompanhamento descartado. Pronto para começar do zero!', 'info');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao descartar arquivo de acompanhamento.', 'error');
+    } finally {
+      setIsDiscardingDriveTracking(false);
     }
   };
 
@@ -1656,6 +1822,20 @@ export default function App() {
         isZip={downloadStats.isZip}
         zipFileName={downloadStats.zipFileName}
         wroteToDisk={downloadStats.wroteToDisk}
+        trackingSavedLocally={downloadStats.trackingSavedLocally}
+        trackingSavedToDrive={downloadStats.trackingSavedToDrive}
+        onOpenFolderPicker={() => setIsFolderModalOpen(true)}
+      />
+
+      {/* Startup Tracking File Comparison Modal */}
+      <DriveTrackingStartupModal
+        isOpen={isDriveTrackingModalOpen}
+        result={driveTrackingCheck}
+        localFolderName={localFolderName}
+        isDiscarding={isDiscardingDriveTracking}
+        onUseFileToAccelerate={handleUseDriveTrackingToAccelerate}
+        onDiscardAndStartFresh={handleDiscardDriveTrackingAndStartFresh}
+        onCloseWithoutDiscarding={() => setIsDriveTrackingModalOpen(false)}
         onOpenFolderPicker={() => setIsFolderModalOpen(true)}
       />
 

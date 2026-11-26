@@ -19,6 +19,11 @@ import {
   saveZipAllCheckpointMeta,
   ZipAllCheckpointMeta,
 } from './zipCheckpoint';
+import {
+  buildDriveTrackingPayload,
+  DriveTrackingFile,
+  saveTrackingFileEverywhere,
+} from './driveTracking';
 
 export interface ZipExportStats {
   fileCount: number;
@@ -34,6 +39,8 @@ export interface ZipExportStats {
   peakSpeedBytes?: number;
   zipFileName?: string;
   wroteToDisk?: boolean;
+  trackingSavedLocally?: boolean;
+  trackingSavedToDrive?: boolean;
 }
 
 const sanitizeSegment = (name: string): string => {
@@ -638,7 +645,8 @@ export const exportAllDriveToZip = async (
   onProgress?: (progress: ZipAllProgress) => void,
   signal?: AbortSignal,
   resumeFromCheckpoint: boolean = false,
-  userNameOrEmail?: string | null
+  userNameOrEmail?: string | null,
+  preMappedCatalog?: DriveTrackingFile | null
 ): Promise<ZipExportStats> => {
   const zip = new JSZip();
   const startedAt = Date.now();
@@ -864,9 +872,42 @@ export const exportAllDriveToZip = async (
 
     if (!loadedSaved && !resumeFromCheckpoint) {
       await cleanupTempRecoveryFiles(targetDirHandle);
+
+      if (preMappedCatalog && Array.isArray(preMappedCatalog.files) && preMappedCatalog.files.length > 0) {
+        allDriveFiles = [...preMappedCatalog.files];
+        for (const f of preMappedCatalog.uniqueFolders || []) {
+          const segs = f.split('/').map(sanitizeSegment).filter(Boolean);
+          if (segs.length > 0) addFolderWithAncestors(uniqueFolders, segs);
+        }
+        for (const item of allDriveFiles) {
+          const sanitized = item.pathSegments.map(sanitizeSegment).filter(Boolean);
+          if (sanitized.length > 0) {
+            addFolderWithAncestors(uniqueFolders, sanitized);
+          }
+        }
+        scannedFolders = Math.max(1, preMappedCatalog.folderCount || uniqueFolders.size);
+        discoveredFolders = scannedFolders;
+        skippedNonExportableCount = preMappedCatalog.skippedNonExportableCount || 0;
+        scanCompleted = true;
+        scanCompletedAt = Date.now();
+        downloadStartedAt = scanCompletedAt;
+
+        emitProgress({
+          phase: 'scanning',
+          percent: 10,
+          currentItem: `Mapeamento acelerado concluído (${allDriveFiles.length} arquivos carregados)!`,
+          processedFiles: 0,
+          totalFiles: allDriveFiles.length,
+          folderCount: scannedFolders,
+          discoveredFolders,
+          downloadedBytes: 0,
+          totalBytesExpected: preMappedCatalog.totalBytesExpected || 0,
+          scanCompletedAt,
+        });
+      }
     }
 
-    if (!loadedSaved || !scanCompleted) {
+    if (!scanCompleted) {
       emitProgress({
         phase: 'scanning',
         percent: Math.min(9, 2 + Math.floor(scannedFolders / 3)),
@@ -1236,6 +1277,22 @@ export const exportAllDriveToZip = async (
     // Delete temporary recovery files once full download completes cleanly
     await cleanupTempRecoveryFiles(targetDirHandle);
 
+    const endedAt = Date.now();
+    const trackingPayload = buildDriveTrackingPayload({
+      files: allDriveFiles,
+      uniqueFolders: Array.from(uniqueFolders),
+      totalBytesExpected,
+      skippedNonExportableCount,
+      startedAt: checkpointCreatedAt,
+      endedAt,
+      source: 'full_drive_zip',
+    });
+    const trackingSaveRes = await saveTrackingFileEverywhere(
+      accessToken,
+      targetDirHandle,
+      trackingPayload
+    );
+
     emitProgress({
       phase: 'saving',
       percent: 100,
@@ -1252,7 +1309,6 @@ export const exportAllDriveToZip = async (
       initialResumedFiles,
     });
 
-    const endedAt = Date.now();
     const elapsedSeconds = Math.max(0, Math.round((priorElapsedMs + (endedAt - startedAt)) / 1000));
     const avgSpeed = zipBlob.size > 0 ? Math.round(zipBlob.size / Math.max(1, elapsedSeconds)) : 0;
 
@@ -1270,6 +1326,8 @@ export const exportAllDriveToZip = async (
       peakSpeedBytes: speedTracker.getPeak(avgSpeed),
       zipFileName: zipName,
       wroteToDisk,
+      trackingSavedLocally: trackingSaveRes.savedLocally,
+      trackingSavedToDrive: trackingSaveRes.savedToDrive,
     };
   } catch (err: any) {
     await persistErrorRecoveryFiles(err);

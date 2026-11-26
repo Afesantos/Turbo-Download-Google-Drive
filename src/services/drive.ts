@@ -60,6 +60,8 @@ export const NON_EXPORTABLE_WORKSPACE_TYPES = new Set<string>([
   'application/vnd.google-apps.drive-sdk',
 ]);
 
+export const DRIVE_TRACKING_FILE_NAME = 'DriveSync_Acompanhamento.json';
+
 export const isGoogleWorkspaceDoc = (mimeType: string): boolean => {
   return mimeType.startsWith('application/vnd.google-apps.') && mimeType !== 'application/vnd.google-apps.folder';
 };
@@ -264,7 +266,10 @@ export const listAllFilesRecursively = async (
         scanTracker
       );
       result.push(...subFiles);
-    } else if (!NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
+    } else if (
+      !(currentPath.length === 0 && item.name === DRIVE_TRACKING_FILE_NAME) &&
+      !NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)
+    ) {
       result.push({
         file: item,
         pathSegments: currentPath,
@@ -330,6 +335,9 @@ export const scanDriveRecursivelyResumable = async (
 
     for (const item of resp.files) {
       if (!item.isFolder) {
+        if (current.pathSegments.length === 0 && item.name === DRIVE_TRACKING_FILE_NAME) {
+          continue;
+        }
         if (NON_EXPORTABLE_WORKSPACE_TYPES.has(item.mimeType)) {
           state.skippedNonExportableCount = (state.skippedNonExportableCount || 0) + 1;
         } else if (!seenFileIds.has(item.id)) {

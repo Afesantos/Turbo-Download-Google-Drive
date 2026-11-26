@@ -50,6 +50,8 @@ interface DownloadSuccessModalProps {
   isZip?: boolean;
   zipFileName?: string | null;
   wroteToDisk?: boolean;
+  trackingSavedLocally?: boolean;
+  trackingSavedToDrive?: boolean;
   onOpenFolderPicker?: () => void;
 }
 
@@ -73,6 +75,8 @@ export const DownloadSuccessModal: React.FC<DownloadSuccessModalProps> = ({
   isZip = false,
   zipFileName,
   wroteToDisk,
+  trackingSavedLocally,
+  trackingSavedToDrive,
   onOpenFolderPicker,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -451,6 +455,20 @@ export const DownloadSuccessModal: React.FC<DownloadSuccessModalProps> = ({
                 <Archive className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span className="truncate">
                   Arquivo salvo: <strong className="font-mono text-slate-200">{zipFileName}</strong>
+                </span>
+              </div>
+            )}
+
+            {(trackingSavedLocally || trackingSavedToDrive) && (
+              <div className="text-[11px] text-emerald-300/90 bg-emerald-950/30 border border-emerald-800/50 rounded-xl px-3 py-2 flex items-center space-x-2">
+                <Cloud className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>
+                  Arquivo de acompanhamento salvo{' '}
+                  {trackingSavedLocally && trackingSavedToDrive
+                    ? 'na pasta local e na raiz do Google Drive.'
+                    : trackingSavedLocally
+                    ? 'na pasta local para verificação futura.'
+                    : 'na raiz do Google Drive para verificação futura.'}
                 </span>
               </div>
             )}
