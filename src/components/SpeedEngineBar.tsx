@@ -61,11 +61,11 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
       <div className="absolute -top-12 -left-12 w-48 h-48 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 min-w-0">
         {/* Speedometer display */}
-        <div className="flex items-center space-x-5">
-          <div className="relative flex items-center justify-center w-20 h-20 rounded-2xl bg-slate-950 border border-slate-800 p-2 shadow-inner">
-            <Gauge className={`w-10 h-10 ${isDownloading ? 'text-orange-500 animate-pulse' : 'text-slate-600'}`} />
+        <div className="flex items-center space-x-4 sm:space-x-5 min-w-0">
+          <div className="relative flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-slate-950 border border-slate-800 p-2 shadow-inner shrink-0">
+            <Gauge className={`w-8 h-8 sm:w-10 sm:h-10 ${isDownloading ? 'text-orange-500 animate-pulse' : 'text-slate-600'}`} />
             <div
               className="absolute inset-0 rounded-2xl border-2 border-orange-500/30"
               style={{
@@ -74,13 +74,13 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
             />
           </div>
 
-          <div>
-            <div className="flex items-center space-x-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] uppercase font-bold tracking-wider text-orange-400 flex items-center space-x-1">
-                <Flame className="w-3.5 h-3.5 fill-orange-400" />
+                <Flame className="w-3.5 h-3.5 fill-orange-400 shrink-0" />
                 <span>Motor de Aceleração Turbo</span>
               </span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
                 isDownloading
                   ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/80 animate-pulse'
                   : isPaused
@@ -91,14 +91,14 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
               </span>
             </div>
 
-            <div className="flex items-baseline space-x-3 mt-1">
-              <span className="text-3xl sm:text-4xl font-extrabold font-mono text-white tracking-tight">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mt-1">
+              <span className="text-2xl sm:text-4xl font-extrabold font-mono text-white tracking-tight">
                 {formatSpeed(currentSpeed)}
               </span>
               <span className="text-xs text-slate-400 font-medium">taxa em tempo real</span>
             </div>
 
-            <div className="flex items-center space-x-4 mt-2 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-slate-400">
               <div className="flex items-center space-x-1">
                 <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
                 <span>Pico:</span>
@@ -106,7 +106,7 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
                   {formatSpeed(peakSpeed)}
                 </span>
               </div>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <div>
                 <span>Total transferido:</span>{' '}
                 <span className="font-mono font-bold text-slate-200">
@@ -118,7 +118,7 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
         </div>
 
         {/* Speed Bar Progress Indicator */}
-        <div className="flex-1 max-w-sm hidden xl:block">
+        <div className="flex-1 max-w-sm hidden xl:block min-w-0">
           <div className="flex justify-between items-center text-xs text-slate-400 mb-1.5 font-medium">
             <span className="flex items-center space-x-1">
               <Cpu className="w-3.5 h-3.5 text-slate-400" />
@@ -144,13 +144,13 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
         </div>
 
         {/* Action Controls: START DOWNLOAD & STOP DOWNLOAD & Tuning */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
           {/* Dynamic Action Button: Changes between Iniciar o Download and Parar o Download */}
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center w-full sm:w-auto">
             {isDownloading ? (
               <button
                 onClick={onStopDownload}
-                className="flex items-center justify-center space-x-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xl active:scale-95 bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/30 ring-2 ring-rose-500/40"
+                className="w-full sm:w-auto flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xl active:scale-95 bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/30 ring-2 ring-rose-500/40"
                 title="Parar imediatamente todas as transferências ativas"
               >
                 <Square className="w-4 h-4 fill-current animate-pulse" />
@@ -159,7 +159,7 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
             ) : (
               <button
                 onClick={onStartDownload}
-                className="flex items-center justify-center space-x-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xl active:scale-95 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 ring-2 ring-emerald-500/40"
+                className="w-full sm:w-auto flex items-center justify-center space-x-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xl active:scale-95 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/30 ring-2 ring-emerald-500/40"
                 title="Iniciar o download para a pasta local"
               >
                 <Play className="w-4 h-4 fill-white text-white" />
@@ -168,17 +168,17 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
             )}
           </div>
 
-          <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+          <div className="h-6 w-px bg-slate-800 hidden xl:block" />
 
           {/* Concurrency Selector */}
-          <div className="bg-slate-950/80 p-1.5 rounded-xl border border-slate-800 flex items-center space-x-1 justify-center">
+          <div className="bg-slate-950/80 p-1.5 rounded-xl border border-slate-800 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1 w-full sm:w-auto">
             {CONCURRENCY_PRESETS.map((p) => {
               const isSelected = concurrency === p.threads;
               return (
                 <button
                   key={p.threads}
                   onClick={() => onConcurrencyChange(p.threads)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                     isSelected
                       ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/20'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -194,12 +194,12 @@ export const SpeedEngineBar: React.FC<SpeedEngineBarProps> = ({
           {/* Multi-Chunk Range switch */}
           <button
             onClick={() => onToggleTurboMultiChunk(!turboMultiChunk)}
-            className={`flex items-center justify-center space-x-2 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
+            className={`w-full sm:w-auto flex items-center justify-center space-x-2 px-3 py-2 rounded-xl text-xs font-semibold border transition-all whitespace-nowrap ${
               turboMultiChunk
                 ? 'bg-orange-950/50 text-orange-300 border-orange-800/80 shadow-md shadow-orange-500/10'
                 : 'bg-slate-950/50 text-slate-400 border-slate-800'
             }`}
-            title="Divide arquivos grandes (>16MB) em partes para baixar com múltiplos canais simultâneos"
+            title="Divide arquivos grandes (>25MB) em partes para baixar com múltiplos canais simultâneos"
           >
             <Layers className="w-3.5 h-3.5" />
             <span>Multi-Chunk {turboMultiChunk ? 'ON' : 'OFF'}</span>

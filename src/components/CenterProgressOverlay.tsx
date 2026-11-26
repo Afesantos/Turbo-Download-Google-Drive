@@ -68,17 +68,17 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-300 pointer-events-auto">
-      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/50 rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/15">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/50 rounded-3xl max-w-xl w-full p-5 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/15 max-h-[92vh] overflow-y-auto">
         {/* Glow ambient background lights */}
         <div className="absolute -top-24 -left-24 w-64 h-64 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
 
         {/* Top Header with Spinning Working Image/Icon */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center space-x-3.5">
-            <div className="relative">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-600 text-white flex items-center justify-center shadow-xl shadow-orange-500/30">
-                <Flame className="w-7 h-7 fill-white" />
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+          <div className="flex items-center space-x-3 sm:space-x-3.5 min-w-0 flex-1">
+            <div className="relative shrink-0">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-rose-600 text-white flex items-center justify-center shadow-xl shadow-orange-500/30">
+                <Flame className="w-6 h-6 sm:w-7 sm:h-7 fill-white" />
               </div>
               {/* Spinning working indicator badge */}
               <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-slate-900 border-2 border-orange-500 flex items-center justify-center">
@@ -86,8 +86,8 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
               </div>
             </div>
 
-            <div>
-              <div className="flex items-center space-x-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
                   Aplicativo Trabalhando...
                 </h3>
@@ -95,9 +95,9 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
                   {concurrency}x Turbo
                 </span>
               </div>
-              <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 font-medium">
+              <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 font-medium min-w-0">
                 <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="truncate max-w-[260px]">
+                <span className="truncate max-w-full">
                   Gravando na pasta: <strong className="text-white font-mono">{localFolderName || 'Downloads'}</strong>
                 </span>
               </p>

@@ -33,11 +33,11 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
       {/* Background accent glow */}
       <div className="absolute top-0 right-0 w-72 h-72 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 min-w-0">
         {/* Left: Folder status and description */}
-        <div className="flex items-start space-x-4">
+        <div className="flex items-start space-x-3 sm:space-x-4 min-w-0 flex-1">
           <div
-            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 border ${
               localFolderName
                 ? 'bg-blue-950/60 text-blue-400 border-blue-800/80 shadow-md shadow-blue-500/10'
                 : 'bg-amber-950/50 text-amber-400 border-amber-800/60'
@@ -50,30 +50,30 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
             )}
           </div>
 
-          <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="font-bold text-slate-100 text-base">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-bold text-slate-100 text-sm sm:text-base">
                 Pasta de Destino no Computador
               </h2>
               {localFolderName ? (
                 <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/70 text-emerald-300 border border-emerald-800/70">
-                  <CheckCircle className="w-3 h-3" />
+                  <CheckCircle className="w-3 h-3 shrink-0" />
                   <span>
                     {isNativeDisk ? 'Gravação Direta no Disco' : 'Download Rápido Ativo'}
                   </span>
                 </span>
               ) : (
                 <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-950/70 text-amber-300 border border-amber-800/70">
-                  <AlertTriangle className="w-3 h-3" />
+                  <AlertTriangle className="w-3 h-3 shrink-0" />
                   <span>Configuração Pendente</span>
                 </span>
               )}
             </div>
 
             {localFolderName ? (
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-300 font-mono bg-slate-950/60 px-3 py-1 rounded-lg border border-slate-800 max-w-fit">
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs sm:text-sm text-slate-300 font-mono bg-slate-950/60 px-3 py-1.5 rounded-lg border border-slate-800 max-w-full min-w-0">
                 <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                <span className="font-bold text-white truncate max-w-xs sm:max-w-md">
+                <span className="font-bold text-white truncate max-w-full sm:max-w-md">
                   {localFolderName}
                 </span>
                 <span className={`text-xs font-sans font-medium ${isNativeDisk ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -109,11 +109,11 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
         </div>
 
         {/* Right: Actions */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-end md:self-center">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full md:w-auto justify-end">
           {!localFolderName && (
             <button
               onClick={onQuickSetDownloads}
-              className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all"
+              className="flex items-center justify-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-95 transition-all"
               title="Ativa a pasta de Downloads com 1 clique"
             >
               <Download className="w-4 h-4" />
@@ -132,7 +132,7 @@ export const FolderSelectorCard: React.FC<FolderSelectorCardProps> = ({
 
           <button
             onClick={onOpenFolderModal}
-            className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/25 active:scale-95 transition-all"
+            className="flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold px-4 py-2.5 rounded-xl text-xs shadow-lg shadow-blue-600/25 active:scale-95 transition-all"
           >
             <FolderOpen className="w-4 h-4" />
             <span>

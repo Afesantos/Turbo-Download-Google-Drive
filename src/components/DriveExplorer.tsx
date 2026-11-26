@@ -204,11 +204,11 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col w-full min-w-0">
       {/* Top Bar: Breadcrumbs & Refresh */}
-      <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950/40">
+      <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-950/40 min-w-0">
         {/* Breadcrumbs */}
-        <nav className="flex items-center space-x-1.5 text-xs text-slate-400 overflow-x-auto py-1">
+        <nav className="flex items-center space-x-1.5 text-xs text-slate-400 overflow-x-auto py-1 min-w-0 max-w-full">
           {breadcrumbs.map((b, index) => {
             const isLast = index === breadcrumbs.length - 1;
             return (
@@ -230,7 +230,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
         </nav>
 
         {/* Actions, Refresh and File count */}
-        <div className="flex items-center space-x-2 text-xs">
+        <div className="flex items-center space-x-2 text-xs shrink-0">
           {onDownloadAllDriveZip && (
             <button
               onClick={onDownloadAllDriveZip}
@@ -257,9 +257,9 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="p-4 border-b border-slate-800/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+      <div className="p-3 sm:p-4 border-b border-slate-800/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 min-w-0">
         {/* Search */}
-        <div className="relative flex-1 max-w-md">
+        <div className="relative flex-1 w-full md:max-w-md min-w-0">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -271,7 +271,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
         </div>
 
         {/* Filter Chips */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 text-xs">
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 md:pb-0 text-xs min-w-0 max-w-full">
           {[
             { id: 'all', label: 'Todos' },
             { id: 'folders', label: 'Pastas' },
@@ -296,8 +296,8 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
 
       {/* Bulk Action Bar (when 1 or more items are selected) */}
       {selectedFileIds.size > 0 && (
-        <div className="bg-gradient-to-r from-blue-950/80 via-indigo-950/80 to-slate-950 border-b border-blue-900/40 p-3 px-4 flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center space-x-3 text-xs text-blue-200">
+        <div className="bg-gradient-to-r from-blue-950/80 via-indigo-950/80 to-slate-950 border-b border-blue-900/40 p-3 px-4 flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-200 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-blue-200 min-w-0">
             <span className="font-bold text-white bg-blue-600 px-2 py-0.5 rounded-md">
               {selectedFileIds.size}
             </span>
@@ -313,7 +313,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             {/* Auto-Sync selected */}
             <button
               onClick={onWatchSelected}
@@ -365,7 +365,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
         <table className="w-full text-left text-xs text-slate-300">
           <thead className="bg-slate-950/60 text-slate-400 uppercase tracking-wider text-[10px] font-semibold border-b border-slate-800 select-none">
             <tr>
-              <th className="py-3 px-4 w-10">
+              <th className="py-3 px-2 sm:px-4 w-8 sm:w-10">
                 <button
                   onClick={() => (allSelected ? onClearSelection() : onSelectAll(filteredFiles.map((f) => f.id)))}
                   className="text-slate-400 hover:text-white"
@@ -380,7 +380,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
               </th>
               <th
                 onClick={() => handleSort('name')}
-                className="py-3 px-3 cursor-pointer hover:text-white transition-colors"
+                className="py-3 px-2 sm:px-3 cursor-pointer hover:text-white transition-colors"
               >
                 <div className="flex items-center space-x-1">
                   <span>Nome do Arquivo / Pasta</span>
@@ -389,7 +389,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
               </th>
               <th
                 onClick={() => handleSort('size')}
-                className="py-3 px-4 cursor-pointer hover:text-white transition-colors w-28"
+                className="py-3 px-2 sm:px-4 cursor-pointer hover:text-white transition-colors w-20 sm:w-28"
               >
                 <div className="flex items-center space-x-1">
                   <span>Tamanho</span>
@@ -405,7 +405,7 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
                   <ArrowUpDown className="w-3 h-3" />
                 </div>
               </th>
-              <th className="py-3 px-4 text-right w-44">Ações Rápidas</th>
+              <th className="py-3 px-2 sm:px-4 text-right w-auto sm:w-44">Ações Rápidas</th>
             </tr>
           </thead>
 
@@ -456,20 +456,21 @@ export const DriveExplorer: React.FC<DriveExplorerProps> = ({
                     </td>
 
                     {/* File / Folder Name with Icon */}
-                    <td className="py-3 px-3">
-                      <div className="flex items-center space-x-3">
+                    <td className="py-3 px-3 max-w-[160px] sm:max-w-xs md:max-w-md lg:max-w-lg">
+                      <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
                         <div className="shrink-0">{getFileIcon(file)}</div>
 
-                        <div className="truncate">
+                        <div className="truncate min-w-0 flex-1">
                           {file.isFolder ? (
                             <button
                               onClick={() => onNavigateFolder(file.id, file.name)}
-                              className="font-semibold text-slate-100 hover:text-blue-400 transition-colors truncate text-left block"
+                              className="font-semibold text-slate-100 hover:text-blue-400 transition-colors truncate text-left block w-full"
+                              title={file.name}
                             >
                               {file.name}
                             </button>
                           ) : (
-                            <span className="font-medium text-slate-200 truncate block">
+                            <span className="font-medium text-slate-200 truncate block" title={file.name}>
                               {file.name}
                             </span>
                           )}

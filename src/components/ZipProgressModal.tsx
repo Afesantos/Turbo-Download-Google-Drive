@@ -61,14 +61,14 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-amber-500/45 ring-4 ring-amber-500/15 rounded-3xl max-w-xl w-full p-6 sm:p-7 shadow-2xl relative overflow-hidden text-slate-100">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-amber-500/45 ring-4 ring-amber-500/15 rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl relative overflow-hidden text-slate-100 max-h-[92vh] overflow-y-auto">
         <div className="absolute -top-20 -right-20 w-56 h-56 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -left-24 w-56 h-56 bg-orange-500/15 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10">
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 mb-5">
-            <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+            <div className="flex items-center space-x-3 min-w-0 flex-1">
               <div className="relative shrink-0">
                 <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/30">
                   <Archive className="w-6 h-6" />
@@ -78,7 +78,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
                 </div>
               </div>
 
-              <div>
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center flex-wrap gap-2">
                   <h3 className="font-extrabold text-base sm:text-lg text-white tracking-tight">
                     Baixar ZIP ({selectedCount} {selectedCount === 1 ? 'selecionado' : 'selecionados'})
@@ -87,9 +87,9 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
                     {PHASE_LABELS[progress.phase]}
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1">
+                <p className="text-xs text-slate-300 flex items-center space-x-1.5 mt-1 min-w-0">
                   <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span className="truncate max-w-[260px]">
+                  <span className="truncate max-w-full">
                     Destino:{' '}
                     <strong className="text-white font-mono">
                       {localFolderName || 'Downloads / DriveSync'}

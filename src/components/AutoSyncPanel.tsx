@@ -55,11 +55,11 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 min-w-0">
         {/* Left: Auto-Sync Master Switch & Status */}
-        <div className="flex items-start space-x-4">
+        <div className="flex items-start space-x-3 sm:space-x-4 min-w-0 flex-1">
           <div
-            className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border transition-all ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 border transition-all ${
               isActive
                 ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/80 shadow-md shadow-emerald-500/10'
                 : 'bg-slate-800/60 text-slate-400 border-slate-700/60'
@@ -68,13 +68,13 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
             <FolderSync className={`w-6 h-6 ${isActive && isChecking ? 'animate-spin' : ''}`} />
           </div>
 
-          <div>
-            <div className="flex items-center space-x-2">
-              <h3 className="font-bold text-slate-100 text-base">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-bold text-slate-100 text-sm sm:text-base">
                 Sincronização Automática em Tempo Real
               </h3>
               <span
-                className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
                   isActive
                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
@@ -89,9 +89,9 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center space-x-2 mt-1 text-xs text-slate-400">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-xs text-slate-400">
               <span className="flex items-center space-x-1">
-                <Clock className="w-3.5 h-3.5 text-slate-500" />
+                <Clock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 <span>
                   Última verificação:{' '}
                   <strong className="text-slate-300 font-mono">
@@ -100,7 +100,7 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
                 </span>
               </span>
 
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
 
               <button
                 onClick={() => setShowWatchedList(!showWatchedList)}
@@ -114,7 +114,7 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
                 )}
               </button>
 
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
 
               <button
                 onClick={() => setShowLogsList(!showLogsList)}
@@ -128,15 +128,15 @@ export const AutoSyncPanel: React.FC<AutoSyncPanelProps> = ({
         </div>
 
         {/* Right: Controls (Interval selector, Force Sync button, Toggle ON/OFF) */}
-        <div className="flex flex-wrap items-center gap-2.5 self-end lg:self-center">
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-end min-w-0">
           {/* Interval Selector */}
-          <div className="flex items-center space-x-1.5 bg-slate-950/70 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs">
-            <span className="text-slate-400 font-medium">Ciclo:</span>
+          <div className="flex items-center space-x-1.5 bg-slate-950/70 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs max-w-full">
+            <span className="text-slate-400 font-medium shrink-0">Ciclo:</span>
             <select
               value={intervalSeconds}
               onChange={(e) => onChangeInterval(Number(e.target.value))}
               disabled={!isActive}
-              className="bg-transparent text-slate-200 font-semibold outline-none cursor-pointer text-xs"
+              className="bg-transparent text-slate-200 font-semibold outline-none cursor-pointer text-xs min-w-0 max-w-full"
             >
               {INTERVAL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">

@@ -952,12 +952,12 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-orange-500/30 selection:text-orange-200">
+    <div className="min-h-screen w-full overflow-x-clip bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-orange-500/30 selection:text-orange-200">
       {/* Toast Notification */}
       {feedbackToast && (
-        <div className="fixed top-5 right-5 z-50 animate-in slide-in-from-top-4 duration-300">
+        <div className="fixed top-4 right-4 left-4 sm:left-auto sm:max-w-md z-50 animate-in slide-in-from-top-4 duration-300">
           <div
-            className={`flex items-center space-x-2.5 px-4 py-3 rounded-xl shadow-2xl text-xs font-semibold border ${
+            className={`flex items-start sm:items-center space-x-2.5 px-4 py-3 rounded-xl shadow-2xl text-xs font-semibold border break-words ${
               feedbackToast.type === 'success'
                 ? 'bg-emerald-950 text-emerald-200 border-emerald-800'
                 : feedbackToast.type === 'error'
@@ -965,10 +965,10 @@ export default function App() {
                 : 'bg-slate-900 text-slate-200 border-slate-700'
             }`}
           >
-            {feedbackToast.type === 'success' && <CheckCircle className="w-4 h-4 text-emerald-400" />}
-            {feedbackToast.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-400" />}
-            {feedbackToast.type === 'info' && <Zap className="w-4 h-4 text-amber-400" />}
-            <span>{feedbackToast.message}</span>
+            {feedbackToast.type === 'success' && <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />}
+            {feedbackToast.type === 'error' && <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 sm:mt-0" />}
+            {feedbackToast.type === 'info' && <Zap className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />}
+            <span className="min-w-0">{feedbackToast.message}</span>
           </div>
         </div>
       )}
@@ -992,16 +992,16 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full min-w-0 mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-5 sm:space-y-6">
         {/* Not Logged In Hero Banner */}
         {!user ? (
-          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-8 sm:p-12 text-center shadow-2xl relative overflow-hidden">
+          <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 sm:p-10 lg:p-12 text-center shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-1/4 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
-            <div className="max-w-2xl mx-auto space-y-6 relative z-10">
-              <div className="inline-flex items-center space-x-2 bg-orange-500/10 border border-orange-500/30 text-orange-400 px-3 py-1.5 rounded-full text-xs font-bold tracking-wide uppercase">
-                <Flame className="w-4 h-4" />
+            <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6 relative z-10">
+              <div className="inline-flex items-center space-x-2 bg-orange-500/10 border border-orange-500/30 text-orange-400 px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-bold tracking-wide uppercase">
+                <Flame className="w-4 h-4 shrink-0" />
                 <span>Velocidade Máxima & Sincronização Direta</span>
               </div>
 
