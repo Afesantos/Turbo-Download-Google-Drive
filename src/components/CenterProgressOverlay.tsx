@@ -67,8 +67,8 @@ export const CenterProgressOverlay: React.FC<CenterProgressOverlayProps> = ({
   const currentFile = activeTasks[0]?.file;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-300 pointer-events-auto">
-      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/50 rounded-3xl max-w-xl w-full p-5 sm:p-8 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/15 max-h-[92vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-300 pointer-events-auto overflow-y-auto">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 border-orange-500/50 rounded-3xl max-w-xl w-full p-5 sm:p-7 shadow-2xl relative overflow-hidden text-slate-100 ring-4 ring-orange-500/15 my-auto">
         {/* Glow ambient background lights */}
         <div className="absolute -top-24 -left-24 w-64 h-64 bg-orange-500/20 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />

@@ -76,9 +76,9 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   const isResumePrompt = !isProcessing && savedCheckpoint !== null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
       <div
-        className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl w-full p-5 sm:p-7 shadow-2xl relative overflow-hidden text-slate-100 transition-all max-h-[92vh] overflow-y-auto ${
+        className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 transition-all my-auto ${
           isProcessing
             ? 'max-w-xl border-emerald-500/45 ring-4 ring-emerald-500/15'
             : isResumePrompt
@@ -113,7 +113,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
           /* Dedicated Tracking Screen (Tela de Acompanhamento) */
           <div className="relative z-10">
             {/* Header */}
-            <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
               <div className="flex items-center space-x-3 min-w-0 flex-1">
                 <div className="relative shrink-0">
                   <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30">
@@ -157,8 +157,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             </div>
 
             {/* Centered Spinning Circular Indicator */}
-            <div className="flex flex-col items-center justify-center my-4">
-              <div className="relative w-24 h-24 flex items-center justify-center">
+            <div className="flex flex-col items-center justify-center my-3">
+              <div className="relative w-22 h-22 sm:w-24 sm:h-24 flex items-center justify-center">
                 <div className="absolute inset-0 rounded-full bg-emerald-500/15 blur-md" />
                 <div className="absolute inset-0 rounded-full border-4 border-slate-800" />
                 <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-emerald-400 border-r-teal-400 animate-spin" />
@@ -175,7 +175,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             </div>
 
             {/* Progress Bar */}
-            <div className="space-y-2 mb-5">
+            <div className="space-y-2 mb-4">
               <div className="flex items-center justify-between text-xs font-semibold">
                 <span className="text-slate-300 flex items-center space-x-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
@@ -232,7 +232,7 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             </div>
 
             {/* Current Item */}
-            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-6 flex items-center space-x-2.5 text-xs">
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 mb-5 flex items-center space-x-2.5 text-xs">
               <RefreshCw className="w-4 h-4 animate-spin text-emerald-400 shrink-0" />
               <div className="min-w-0 flex-1">
                 <span className="text-[10px] text-slate-500 uppercase font-bold block">
