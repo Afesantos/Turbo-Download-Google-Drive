@@ -372,10 +372,15 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Falha no login:', err);
-      const msg =
-        err?.code === 'auth/popup-blocked'
-          ? 'Popup bloqueado pelo navegador. Permita popups ou abra o app em nova aba.'
-          : 'Falha ao conectar conta Google. Verifique os popups e tente novamente.';
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+      let msg = 'Falha ao conectar conta Google. Verifique os popups e tente novamente.';
+      if (err?.code === 'auth/popup-blocked') {
+        msg = 'Popup bloqueado pelo navegador. Permita popups ou abra o app em nova aba.';
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        msg = `Domínio "${currentHost}" não autorizado no Firebase Authentication. Adicione este domínio em Firebase Console > Authentication > Settings > Authorized domains.`;
+      } else if (err?.message) {
+        msg = err.message;
+      }
       showToast(msg, 'error');
     } finally {
       setIsLoggingIn(false);
