@@ -23,6 +23,8 @@ interface ZipProgressModalProps {
   selectedCount: number;
   progress: ZipAllProgress;
   localFolderName: string | null;
+  concurrency?: number;
+  turboMultiChunk?: boolean;
   onCancel: () => void;
   isCancelling: boolean;
 }
@@ -39,6 +41,8 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
   selectedCount,
   progress,
   localFolderName,
+  concurrency,
+  turboMultiChunk,
   onCancel,
   isCancelling,
 }) => {
@@ -71,12 +75,12 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
       <div
-        className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 my-auto transition-all duration-500 ${
+        className={`bg-gradient-to-br border-2 rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 my-auto transition-all duration-500 ${
           isScanning
-            ? 'border-indigo-500/50 ring-4 ring-indigo-500/20 shadow-indigo-500/20'
+            ? 'from-indigo-950/95 via-slate-900 to-slate-950 border-indigo-500/50 ring-4 ring-indigo-500/20 shadow-indigo-500/20'
             : isDownloadingPhase
-            ? 'border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-emerald-500/20'
-            : 'border-purple-500/50 ring-4 ring-purple-500/20 shadow-purple-500/20'
+            ? 'from-emerald-950/95 via-slate-900 to-slate-950 border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-emerald-500/20'
+            : 'from-purple-950/95 via-slate-900 to-slate-950 border-purple-500/50 ring-4 ring-purple-500/20 shadow-purple-500/20'
         }`}
       >
         {/* Dynamic Background Glow based on Phase */}
@@ -236,7 +240,7 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
           </div>
 
           {/* Progress Bar */}
-          <div className="space-y-2 mb-4">
+          <div className="space-y-2 mb-3">
             <div className="flex items-center justify-between text-xs font-semibold">
               <span className="text-slate-300 flex items-center space-x-2">
                 <span
@@ -244,7 +248,13 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
                     isScanning ? 'bg-indigo-400' : isDownloadingPhase ? 'bg-emerald-400' : 'bg-purple-400'
                   }`}
                 />
-                <span>{PHASE_LABELS[progress.phase]}</span>
+                <span>
+                  {isScanning
+                    ? `Fase 1 (Mapeando Pastas e Arquivos): ${progress.percent}%`
+                    : isDownloadingPhase
+                    ? `Fase 2 (Baixando Arquivos): ${progress.percent}% (${progress.processedFiles}/${progress.totalFiles})`
+                    : PHASE_LABELS[progress.phase]}
+                </span>
               </span>
               <span
                 className={`text-sm font-bold font-mono ${
@@ -270,6 +280,25 @@ export const ZipProgressModal: React.FC<ZipProgressModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Turbo Acceleration Engine Status Bar Badge */}
+          {concurrency !== undefined && (
+            <div className="mb-3 bg-slate-950/80 border border-slate-800/90 rounded-2xl px-3.5 py-2 flex items-center justify-between text-xs">
+              <div className="flex items-center space-x-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="font-bold text-amber-300">Motor de Aceleração Turbo:</span>
+                <span className="font-mono font-bold text-white bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+                  {concurrency}x Threads
+                </span>
+              </div>
+              <div className="flex items-center space-x-1.5 font-mono text-[11px]">
+                <span className="text-slate-400">Multi-Chunk:</span>
+                <span className={turboMultiChunk ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                  {turboMultiChunk ? 'ATIVO (ON)' : 'OFF'}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Live Counters Grid */}
           <div className="grid grid-cols-3 gap-2.5 mb-2.5">

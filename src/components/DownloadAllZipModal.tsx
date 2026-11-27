@@ -45,6 +45,8 @@ interface DownloadAllZipModalProps {
   progress: ZipAllProgress;
   savedCheckpoint: ZipAllCheckpointSummary | null;
   localFolderName: string | null;
+  concurrency?: number;
+  turboMultiChunk?: boolean;
   onConfirmFresh: () => void;
   onResumeCheckpoint: () => void;
   onDenyResumeAndStartFresh: () => void;
@@ -56,10 +58,10 @@ interface DownloadAllZipModalProps {
 }
 
 const PHASE_LABELS: Record<ZipAllProgress['phase'], string> = {
-  scanning: 'Mapeando Pastas do Drive',
-  downloading: 'Baixando Arquivos',
-  compressing: 'Compactando em .ZIP',
-  saving: 'Salvando Arquivo .ZIP',
+  scanning: 'Mapeando Pastas e Lendo Arquivos do Google Drive',
+  downloading: 'Baixando e Gravando Arquivos no Computador',
+  compressing: 'Compactando em Arquivo .ZIP',
+  saving: 'Salvando Arquivo .ZIP no Destino',
 };
 
 export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
@@ -73,6 +75,8 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   progress,
   savedCheckpoint,
   localFolderName,
+  concurrency,
+  turboMultiChunk,
   onConfirmFresh,
   onResumeCheckpoint,
   onDenyResumeAndStartFresh,
@@ -108,6 +112,9 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
     !isProcessing && !isAuthExpired && !isCancelConfirm && !isErrorState && savedCheckpoint !== null;
   const timing = computeZipTimingMetrics(progress, startTimeRef.current, nowMs);
 
+  const isScanning = isProcessing && progress.phase === 'scanning';
+  const isDownloadingPhase = isProcessing && progress.phase === 'downloading';
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && onImportRecoveryFile) {
@@ -119,14 +126,18 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200 overflow-y-auto">
       <div
-        className={`bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border-2 rounded-3xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 transition-all my-auto ${
+        className={`bg-gradient-to-br border-2 rounded-3xl w-full p-5 sm:p-6 shadow-2xl relative overflow-hidden text-slate-100 transition-all duration-500 my-auto ${
           isProcessing
-            ? 'max-w-xl border-emerald-500/45 ring-4 ring-emerald-500/15'
+            ? isScanning
+              ? 'max-w-xl from-indigo-950/95 via-slate-900 to-slate-950 border-indigo-500/50 ring-4 ring-indigo-500/20 shadow-indigo-500/20'
+              : isDownloadingPhase
+              ? 'max-w-xl from-emerald-950/95 via-slate-900 to-slate-950 border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-emerald-500/20'
+              : 'max-w-xl from-purple-950/95 via-slate-900 to-slate-950 border-purple-500/50 ring-4 ring-purple-500/20 shadow-purple-500/20'
             : isAuthExpired || isErrorState
-            ? 'max-w-lg border-rose-500/45 ring-4 ring-rose-500/15'
+            ? 'max-w-lg from-rose-950/90 via-slate-900 to-slate-950 border-rose-500/45 ring-4 ring-rose-500/15'
             : isCancelConfirm || isResumePrompt
-            ? 'max-w-lg border-blue-500/45 ring-4 ring-blue-500/15'
-            : 'max-w-md border-amber-500/40 ring-4 ring-amber-500/10'
+            ? 'max-w-lg from-blue-950/90 via-slate-900 to-slate-950 border-blue-500/45 ring-4 ring-blue-500/15'
+            : 'max-w-md from-amber-950/90 via-slate-900 to-slate-950 border-amber-500/40 ring-4 ring-amber-500/10'
         }`}
       >
         <input
@@ -294,26 +305,57 @@ export const DownloadAllZipModal: React.FC<DownloadAllZipModalProps> = ({
             </div>
 
             {/* Progress Bar */}
-            <div className="space-y-2 mb-4">
+            <div className="space-y-2 mb-3">
               <div className="flex items-center justify-between text-xs font-semibold">
                 <span className="text-slate-300 flex items-center space-x-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span>{PHASE_LABELS[progress.phase]}</span>
+                  <span className={`w-2 h-2 rounded-full animate-ping ${isScanning ? 'bg-indigo-400' : isDownloadingPhase ? 'bg-emerald-400' : 'bg-purple-400'}`} />
+                  <span>
+                    {isScanning
+                      ? `Fase 1 (Mapeando Pastas e Arquivos): ${progress.percent}%`
+                      : isDownloadingPhase
+                      ? `Fase 2 (Baixando Arquivos): ${progress.percent}% (${progress.processedFiles}/${progress.totalFiles})`
+                      : PHASE_LABELS[progress.phase]}
+                  </span>
                 </span>
-                <span className="text-sm font-bold font-mono text-emerald-400">
+                <span className={`text-sm font-bold font-mono ${isScanning ? 'text-indigo-400' : isDownloadingPhase ? 'text-emerald-400' : 'text-purple-400'}`}>
                   {progress.percent}%
                 </span>
               </div>
 
               <div className="w-full bg-slate-950 h-4 rounded-full overflow-hidden p-0.5 border border-slate-800 shadow-inner">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-amber-400 transition-all duration-300 relative overflow-hidden"
+                  className={`h-full rounded-full transition-all duration-300 relative overflow-hidden ${
+                    isScanning
+                      ? 'bg-gradient-to-r from-indigo-600 via-blue-500 to-teal-400'
+                      : isDownloadingPhase
+                      ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-amber-400'
+                      : 'bg-gradient-to-r from-purple-500 via-indigo-500 to-blue-500'
+                  }`}
                   style={{ width: `${Math.max(4, progress.percent)}%` }}
                 >
                   <div className="absolute inset-0 bg-white/20 opacity-40 animate-[shimmer_2s_infinite] [background-image:linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] [background-size:20px_20px]" />
                 </div>
               </div>
             </div>
+
+            {/* Turbo Acceleration Engine Status Bar Badge */}
+            {concurrency !== undefined && (
+              <div className="mb-3 bg-slate-950/80 border border-slate-800/90 rounded-2xl px-3.5 py-2 flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="font-bold text-amber-300">Motor de Aceleração Turbo:</span>
+                  <span className="font-mono font-bold text-white bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+                    {concurrency}x Threads
+                  </span>
+                </div>
+                <div className="flex items-center space-x-1.5 font-mono text-[11px]">
+                  <span className="text-slate-400">Multi-Chunk:</span>
+                  <span className={turboMultiChunk ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                    {turboMultiChunk ? 'ATIVO (ON)' : 'OFF'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Live Counters Grid */}
             <div className="grid grid-cols-3 gap-2.5 mb-2.5">

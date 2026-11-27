@@ -136,7 +136,7 @@ export default function App() {
 
   // Sync Engine state
   const [syncState, setSyncState] = useState<SyncEngineState>({
-    isActive: true,
+    isActive: false,
     isChecking: false,
     intervalSeconds: 10,
     lastCheckTimestamp: null,
@@ -1943,6 +1943,8 @@ export default function App() {
         progress={downloadAllProgress}
         savedCheckpoint={savedZipCheckpoint}
         localFolderName={localFolderName}
+        concurrency={concurrency}
+        turboMultiChunk={turboMultiChunk}
         onConfirmFresh={handleConfirmFreshDownloadAllZip}
         onResumeCheckpoint={handleResumeDownloadAllZip}
         onDenyResumeAndStartFresh={handleDenyResumeAndStartFresh}
@@ -1959,6 +1961,8 @@ export default function App() {
         progress={zipProgress}
         localFolderName={localFolderName}
         selectedCount={zipSelectedCount}
+        concurrency={concurrency}
+        turboMultiChunk={turboMultiChunk}
         onCancel={handleCancelZip}
       />
     </div>
